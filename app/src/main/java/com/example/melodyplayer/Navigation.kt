@@ -8,19 +8,31 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.example.melodyplayer.ui.PlayerScreen
+import com.example.melodyplayer.ui.SongListScreen
 
 @Composable
 fun MainNavigation() {
-  val backStack = rememberNavBackStack(Main)
+  val backStack = rememberNavBackStack(SongList)
+  val viewModel: PlaybackViewModel = viewModel()
 
   NavDisplay(
     backStack = backStack,
     onBack = { backStack.removeLastOrNull() },
     entryProvider =
       entryProvider {
-        entry<Main> {
-          val viewModel: PlaybackViewModel = viewModel()
-          PlayerScreen(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+        entry<SongList> {
+          SongListScreen(
+            viewModel = viewModel,
+            onNavigateToPlayer = { backStack.add(Player) },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
+        entry<Player> {
+          PlayerScreen(
+            viewModel = viewModel,
+            onBack = { backStack.removeLastOrNull() },
+            modifier = Modifier.fillMaxSize()
+          )
         }
       },
   )
