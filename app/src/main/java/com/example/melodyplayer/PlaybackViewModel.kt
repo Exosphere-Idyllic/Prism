@@ -17,11 +17,13 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 
@@ -29,6 +31,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState = _uiState.asStateFlow()
+
+    private val _progressState = MutableStateFlow(ProgressState())
+    val progressState = _progressState.asStateFlow()
 
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
@@ -60,85 +65,96 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun loadLocalSongs() {
-        val context = getApplication<Application>().applicationContext
-        val songList = mutableListOf<Song>()
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM_ID
-        )
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val songList = mutableListOf<Song>()
+            val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM_ID
+            )
+            val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
 
-        try {
-            context.contentResolver.query(
-                uri,
-                projection,
-                selection,
-                null,
-                "${MediaStore.Audio.Media.TITLE} ASC"
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+            try {
+                context.contentResolver.query(
+                    uri,
+                    projection,
+                    selection,
+                    null,
+                    "${MediaStore.Audio.Media.TITLE} ASC"
+                )?.use { cursor ->
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                    val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                    val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                    val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
 
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idColumn)
-                    val title = cursor.getString(titleColumn) ?: "Unknown Title"
-                    val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
-                    val albumId = cursor.getLong(albumIdColumn)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idColumn)
+                        val title = cursor.getString(titleColumn) ?: "Unknown Title"
+                        val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
+                        val albumId = cursor.getLong(albumIdColumn)
 
-                    val mediaUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
-                    val artworkUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId).toString()
+                        val mediaUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
+                        val artworkUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId).toString()
 
-                    songList.add(
-                        Song(
-                            id = id.toString(),
-                            title = title,
-                            artist = artist,
-                            mediaUri = mediaUri,
-                            artworkUri = artworkUri
+                        songList.add(
+                            Song(
+                                id = id.toString(),
+                                title = title,
+                                artist = artist,
+                                mediaUri = mediaUri,
+                                artworkUri = artworkUri
+                            )
                         )
-                    )
+                    }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+
+            // If local storage is empty, fallback to mock so application is testable
+            val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
+            
+            withContext(Dispatchers.Main) {
+                _allSongs.value = finalSongs
+                filterSongs()
+                mediaController?.let { updateControllerMediaItems(it, finalSongs) }
+            }
         }
-
-        // If local storage is empty, fallback to mock so application is testable
-        val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
-        _allSongs.value = finalSongs
-        filterSongs()
-
-        mediaController?.let { updateControllerMediaItems(it, finalSongs) }
     }
 
     private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
-        val mediaItems = songs.map { song ->
-            MediaItem.Builder()
-                .setMediaId(song.id)
-                .setUri(Uri.parse(song.mediaUri))
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(song.title)
-                        .setArtist(song.artist)
-                        .setArtworkUri(Uri.parse(song.artworkUri))
-                        .build()
-                )
-                .build()
-        }
-        controller.setMediaItems(mediaItems)
-        controller.prepare()
+        viewModelScope.launch(Dispatchers.Default) {
+            val mediaItems = songs.map { song ->
+                MediaItem.Builder()
+                    .setMediaId(song.id)
+                    .setUri(Uri.parse(song.mediaUri))
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(song.artist)
+                            .setArtworkUri(Uri.parse(song.artworkUri))
+                            .build()
+                    )
+                    .build()
+            }
+            withContext(Dispatchers.Main) {
+                controller.setMediaItems(mediaItems)
+                controller.prepare()
 
-        val currentMediaItem = controller.currentMediaItem
-        val currentSong = songs.find { it.id == currentMediaItem?.mediaId } ?: songs.firstOrNull()
-        _uiState.value = _uiState.value.copy(
-            playlist = _uiState.value.playlist, // Keep search filtering in UI
-            currentSong = currentSong
-        )
+                val currentMediaItem = controller.currentMediaItem
+                val currentSong = songs.find { it.id == currentMediaItem?.mediaId } ?: songs.firstOrNull()
+                _uiState.value = _uiState.value.copy(
+                    playlist = _uiState.value.playlist, // Keep search filtering in UI
+                    currentSong = currentSong
+                )
+                _progressState.value = _progressState.value.copy(
+                    duration = controller.duration.coerceAtLeast(0L)
+                )
+            }
+        }
     }
 
     fun setSearchQuery(query: String) {
@@ -147,16 +163,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun filterSongs() {
-        val query = _searchQuery.value
-        val filtered = if (query.isEmpty()) {
-            _allSongs.value
-        } else {
-            _allSongs.value.filter {
-                it.title.contains(query, ignoreCase = true) ||
-                it.artist.contains(query, ignoreCase = true)
+        viewModelScope.launch {
+            val query = _searchQuery.value
+            val allSongs = _allSongs.value
+            val filtered = withContext(Dispatchers.Default) {
+                if (query.isEmpty()) {
+                    allSongs
+                } else {
+                    allSongs.filter {
+                        it.title.contains(query, ignoreCase = true) ||
+                        it.artist.contains(query, ignoreCase = true)
+                    }
+                }
             }
+            _uiState.value = _uiState.value.copy(playlist = filtered)
         }
-        _uiState.value = _uiState.value.copy(playlist = filtered)
     }
 
     private fun initializeController() {
@@ -199,13 +220,15 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 val songs = if (_allSongs.value.isNotEmpty()) _allSongs.value else MockPlaylist.songs
                 val song = songs.find { it.id == mediaItem?.mediaId }
                 _uiState.value = _uiState.value.copy(
-                    currentSong = song ?: _uiState.value.currentSong,
+                    currentSong = song ?: _uiState.value.currentSong
+                )
+                _progressState.value = _progressState.value.copy(
                     duration = controller.duration.coerceAtLeast(0L)
                 )
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _uiState.value = _uiState.value.copy(
+                _progressState.value = _progressState.value.copy(
                     duration = controller.duration.coerceAtLeast(0L)
                 )
             }
@@ -223,9 +246,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = PlaybackUiState(
             currentSong = song ?: songs.firstOrNull(),
             isPlaying = controller.isPlaying,
-            currentPosition = controller.currentPosition.coerceAtLeast(0L),
-            duration = controller.duration.coerceAtLeast(0L),
             playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs
+        )
+        _progressState.value = ProgressState(
+            currentPosition = controller.currentPosition.coerceAtLeast(0L),
+            duration = controller.duration.coerceAtLeast(0L)
         )
     }
 
@@ -261,7 +286,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
-        _uiState.value = _uiState.value.copy(currentPosition = positionMs)
+        _progressState.value = _progressState.value.copy(currentPosition = positionMs)
     }
 
     private fun startProgressUpdate() {
@@ -269,12 +294,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         progressJob = viewModelScope.launch {
             while (true) {
                 mediaController?.let { controller ->
-                    _uiState.value = _uiState.value.copy(
+                    _progressState.value = ProgressState(
                         currentPosition = controller.currentPosition.coerceAtLeast(0L),
                         duration = controller.duration.coerceAtLeast(0L)
                     )
                 }
-                delay(500)
+                delay(250)
             }
         }
     }
@@ -295,7 +320,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 data class PlaybackUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
-    val currentPosition: Long = 0L,
-    val duration: Long = 0L,
     val playlist: List<Song> = emptyList()
+)
+
+data class ProgressState(
+    val currentPosition: Long = 0L,
+    val duration: Long = 0L
 )

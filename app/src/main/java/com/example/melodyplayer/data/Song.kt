@@ -1,5 +1,8 @@
 package com.example.melodyplayer.data
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class Song(
     val id: String,
     val title: String,

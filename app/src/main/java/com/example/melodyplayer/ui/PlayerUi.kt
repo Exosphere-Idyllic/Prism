@@ -38,11 +38,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
+import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.example.melodyplayer.PlaybackUiState
 import com.example.melodyplayer.PlaybackViewModel
+import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
+import kotlinx.coroutines.flow.StateFlow
 
 // ─────────────────────────────────────────────
 //  SONG LIST SCREEN (Home)
@@ -54,8 +58,8 @@ fun SongListScreen(
     onNavigateToPlayer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val state by viewModel.uiState.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Determine which permission to request
@@ -81,18 +85,20 @@ fun SongListScreen(
         }
     }
 
+    val backgroundBrush = remember {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF0D0D1A),
+                Color(0xFF0A0A14),
+                Color(0xFF070710)
+            )
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF0D0D1A),
-                        Color(0xFF0A0A14),
-                        Color(0xFF070710)
-                    )
-                )
-            )
+            .background(brush = backgroundBrush)
     ) {
         Column(
             modifier = Modifier
@@ -157,14 +163,17 @@ fun SongListScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
+                val onSongSelected = remember(viewModel, onNavigateToPlayer) {
+                    { song: Song ->
+                        viewModel.playSong(song)
+                        onNavigateToPlayer()
+                    }
+                }
                 SongList(
                     playlist = state.playlist,
                     currentSong = state.currentSong,
                     isPlaying = state.isPlaying,
-                    onSongSelected = { song ->
-                        viewModel.playSong(song)
-                        onNavigateToPlayer()
-                    },
+                    onSongSelected = onSongSelected,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -172,9 +181,11 @@ fun SongListScreen(
 
         // ── Mini Player (bottom) ─────────────────
         if (state.currentSong != null) {
+            val onPlayPauseToggle = remember(viewModel) { { viewModel.togglePlayPause() } }
             MiniPlayer(
                 state = state,
-                onPlayPauseToggle = { viewModel.togglePlayPause() },
+                progressStateFlow = viewModel.progressState,
+                onPlayPauseToggle = onPlayPauseToggle,
                 onOpenPlayer = onNavigateToPlayer,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -213,14 +224,14 @@ fun SearchBar(
                         fontSize = 14.sp
                     )
                 }
+                val textStyle = remember {
+                    TextStyle(color = Color.White, fontSize = 14.sp)
+                }
                 BasicTextField(
                     value = query,
                     onValueChange = onQueryChange,
                     singleLine = true,
-                    textStyle = TextStyle(
-                        color = Color.White,
-                        fontSize = 14.sp
-                    ),
+                    textStyle = textStyle,
                     cursorBrush = SolidColor(Color(0xFF818CF8)),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -240,89 +251,16 @@ fun SongList(
 ) {
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp, ),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(playlist, key = { it.id }) { song ->
-            val isSelected = song.id == currentSong?.id
-            val bgColor = if (isSelected)
-                Color(0xFF6366F1).copy(alpha = 0.15f)
-            else
-                Color.Transparent
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(bgColor)
-                    .clickable { onSongSelected(song) }
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Album art thumbnail
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White.copy(alpha = 0.06f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (song.artworkUri.isNotEmpty()) {
-                        GlideImage(
-                            model = song.artworkUri,
-                            contentDescription = "Album art",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.3f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = song.title,
-                        color = if (isSelected) Color(0xFFA5B4FC) else Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = song.artist,
-                        color = Color.White.copy(alpha = 0.45f),
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (isSelected && isPlaying) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    // Animated playing indicator dots
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        repeat(3) { i ->
-                            Box(
-                                modifier = Modifier
-                                    .size(width = 3.dp, height = if (i == 1) 14.dp else 9.dp)
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color(0xFF818CF8))
-                            )
-                        }
-                    }
-                }
-            }
+            SongListItem(
+                song = song,
+                isSelected = song.id == currentSong?.id,
+                isPlaying = isPlaying,
+                onSongSelected = onSongSelected
+            )
         }
         // Bottom spacing so mini-player doesn't cover last item
         item { Spacer(modifier = Modifier.height(96.dp)) }
@@ -331,15 +269,110 @@ fun SongList(
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
+fun SongListItem(
+    song: Song,
+    isSelected: Boolean,
+    isPlaying: Boolean,
+    onSongSelected: (Song) -> Unit
+) {
+    val bgColor = remember(isSelected) {
+        if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f)
+        else Color.Transparent
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(bgColor)
+            .clickable { onSongSelected(song) }
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Album art thumbnail
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White.copy(alpha = 0.06f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (song.artworkUri.isNotEmpty()) {
+                GlideImage(
+                    model = song.artworkUri,
+                    contentDescription = "Album art",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .placeholder(android.R.color.darker_gray)
+                        .error(android.R.color.darker_gray)
+                        .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(14.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                color = if (isSelected) Color(0xFFA5B4FC) else Color.White,
+                fontSize = 14.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = song.artist,
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        if (isSelected && isPlaying) {
+            Spacer(modifier = Modifier.width(8.dp))
+            // Animated playing indicator dots
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(3) { i ->
+                    Box(
+                        modifier = Modifier
+                            .size(width = 3.dp, height = if (i == 1) 14.dp else 9.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFF818CF8))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
 fun MiniPlayer(
     state: PlaybackUiState,
+    progressStateFlow: StateFlow<ProgressState>,
     onPlayPauseToggle: () -> Unit,
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val song = state.currentSong ?: return
-    val progress = if (state.duration > 0) {
-        (state.currentPosition.toFloat() / state.duration.toFloat()).coerceIn(0f, 1f)
+    val progress by progressStateFlow.collectAsStateWithLifecycle()
+    val progressFraction = if (progress.duration > 0) {
+        (progress.currentPosition.toFloat() / progress.duration.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
     Card(
@@ -362,7 +395,7 @@ fun MiniPlayer(
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(progress)
+                        .fillMaxWidth(progressFraction)
                         .fillMaxHeight()
                         .background(
                             brush = Brush.horizontalGradient(
@@ -392,7 +425,12 @@ fun MiniPlayer(
                             contentDescription = "Mini player art",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
-                        )
+                        ) {
+                            it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .placeholder(android.R.color.darker_gray)
+                                .error(android.R.color.darker_gray)
+                                .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
+                        }
                     } else {
                         Icon(
                             imageVector = Icons.Default.MusicNote,
@@ -558,20 +596,22 @@ fun PlayerScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val state by viewModel.uiState.collectAsState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    val playerBrush = remember {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF1E1B4B),
+                Color(0xFF0F172A),
+                Color(0xFF020617)
+            )
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF1E1B4B),
-                        Color(0xFF0F172A),
-                        Color(0xFF020617)
-                    )
-                )
-            )
+            .background(brush = playerBrush)
     ) {
         Column(
             modifier = Modifier
@@ -609,12 +649,17 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            val onPlayPauseToggle = remember(viewModel) { { viewModel.togglePlayPause() } }
+            val onNext = remember(viewModel) { { viewModel.next() } }
+            val onPrevious = remember(viewModel) { { viewModel.previous() } }
+            val onSeek = remember(viewModel) { { ms: Long -> viewModel.seekTo(ms) } }
             PlayerCard(
                 state = state,
-                onPlayPauseToggle = { viewModel.togglePlayPause() },
-                onNext = { viewModel.next() },
-                onPrevious = { viewModel.previous() },
-                onSeek = { viewModel.seekTo(it) }
+                progressStateFlow = viewModel.progressState,
+                onPlayPauseToggle = onPlayPauseToggle,
+                onNext = onNext,
+                onPrevious = onPrevious,
+                onSeek = onSeek
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -639,7 +684,7 @@ fun PlayerScreen(
                 playlist = state.playlist,
                 currentSong = state.currentSong,
                 isPlaying = state.isPlaying,
-                onSongSelected = { viewModel.playSong(it) },
+                onSongSelected = remember(viewModel) { { viewModel.playSong(it) } },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -654,6 +699,7 @@ fun PlayerScreen(
 @Composable
 fun PlayerCard(
     state: PlaybackUiState,
+    progressStateFlow: StateFlow<ProgressState>,
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -689,7 +735,12 @@ fun PlayerCard(
                         contentDescription = "Album Art",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
-                    )
+                    ) {
+                        it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                            .placeholder(android.R.color.darker_gray)
+                            .error(android.R.color.darker_gray)
+                            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
+                    }
                 } else {
                     Icon(
                         imageVector = Icons.Default.MusicNote,
@@ -723,8 +774,7 @@ fun PlayerCard(
             Spacer(modifier = Modifier.height(24.dp))
 
             PlaybackProgress(
-                currentPosition = state.currentPosition,
-                duration = state.duration,
+                progressStateFlow = progressStateFlow,
                 onSeek = onSeek
             )
 
@@ -746,32 +796,42 @@ fun PlayerCard(
 
 @Composable
 fun PlaybackProgress(
-    currentPosition: Long,
-    duration: Long,
+    progressStateFlow: StateFlow<ProgressState>,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var sliderPosition by remember(currentPosition) { mutableFloatStateOf(currentPosition.toFloat()) }
+    val progress by progressStateFlow.collectAsStateWithLifecycle()
+    val currentPosition = progress.currentPosition
+    val duration = progress.duration
+
     var isDragging by remember { mutableStateOf(false) }
-    val totalDuration = duration.coerceAtLeast(1L)
-    val progressFraction = (sliderPosition / totalDuration).coerceIn(0f, 1f)
+    var dragPosition by remember { mutableFloatStateOf(0f) }
+    val totalDuration = remember(duration) { duration.coerceAtLeast(1L) }
+
+    // Only update slider from external position when not dragging
+    val progressFraction = if (isDragging) dragPosition
+        else (currentPosition.toFloat() / totalDuration).coerceIn(0f, 1f)
+
+    // SliderDefaults.colors() is @Composable — must be called directly in composable scope
+    // Compose's own skip-recomposition mechanism handles caching when inputs don't change
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = Color(0xFFA5B4FC),
+        activeTrackColor = Color(0xFF6366F1),
+        inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+    )
 
     Column(modifier = modifier.fillMaxWidth()) {
         Slider(
             value = progressFraction,
-            onValueChange = {
+            onValueChange = { fraction ->
                 isDragging = true
-                sliderPosition = it * totalDuration
+                dragPosition = fraction
             },
             onValueChangeFinished = {
                 isDragging = false
-                onSeek(sliderPosition.toLong())
+                onSeek((dragPosition * totalDuration).toLong())
             },
-            colors = SliderDefaults.colors(
-                thumbColor = Color(0xFFA5B4FC),
-                activeTrackColor = Color(0xFF6366F1),
-                inactiveTrackColor = Color.White.copy(alpha = 0.15f)
-            ),
+            colors = sliderColors,
             modifier = Modifier.fillMaxWidth()
         )
         Row(
@@ -781,7 +841,7 @@ fun PlaybackProgress(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = formatTime(if (isDragging) sliderPosition.toLong() else currentPosition),
+                text = formatTime(if (isDragging) (dragPosition * totalDuration).toLong() else currentPosition),
                 color = Color.White.copy(alpha = 0.5f),
                 fontSize = 12.sp
             )
@@ -870,77 +930,101 @@ fun PlaylistQueue(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(playlist, key = { it.id }) { song ->
-            val isSelected = song.id == currentSong?.id
-            val backgroundColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
-            val borderColor = if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
+            QueueListItem(
+                song = song,
+                isSelected = song.id == currentSong?.id,
+                isPlaying = isPlaying,
+                onSongSelected = onSongSelected
+            )
+        }
+    }
+}
 
-            Card(
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
+fun QueueListItem(
+    song: Song,
+    isSelected: Boolean,
+    isPlaying: Boolean,
+    onSongSelected: (Song) -> Unit
+) {
+    val backgroundColor = remember(isSelected) {
+        if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
+    }
+    val borderColor = remember(isSelected) {
+        if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSongSelected(song) },
+        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        border = BorderStroke(1.dp, borderColor),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSongSelected(song) },
-                colors = CardDefaults.cardColors(containerColor = backgroundColor),
-                border = BorderStroke(1.dp, borderColor),
-                shape = RoundedCornerShape(14.dp)
+                    .size(50.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.05f)),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.05f)),
-                        contentAlignment = Alignment.Center
+                if (song.artworkUri.isNotEmpty()) {
+                    GlideImage(
+                        model = song.artworkUri,
+                        contentDescription = "Artwork Thumbnail",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        if (song.artworkUri.isNotEmpty()) {
-                            GlideImage(
-                                model = song.artworkUri,
-                                contentDescription = "Artwork Thumbnail",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.MusicNote,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.3f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                        it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                            .placeholder(android.R.color.darker_gray)
+                            .error(android.R.color.darker_gray)
+                            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
                     }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = song.title,
-                            color = if (isSelected) Color(0xFFA5B4FC) else Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = song.artist,
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    if (isSelected && isPlaying) {
-                        Text(
-                            text = "▶",
-                            color = Color(0xFFA5B4FC),
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.3f),
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    color = if (isSelected) Color(0xFFA5B4FC) else Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song.artist,
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (isSelected && isPlaying) {
+                Text(
+                    text = "▶",
+                    color = Color(0xFFA5B4FC),
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
             }
         }
     }
