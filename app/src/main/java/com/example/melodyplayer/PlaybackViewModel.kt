@@ -138,11 +138,15 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         val context = getApplication<Application>().applicationContext
         songs.forEach { song ->
             if (song.artworkUri.isNotEmpty()) {
-                val request = ImageRequest.Builder(context)
-                    .data(song.artworkUri)
-                    .size(200) // Debe coincidir con el override de la UI
-                    .build()
-                context.imageLoader.enqueue(request)
+                try {
+                    val request = ImageRequest.Builder(context)
+                        .data(song.artworkUri)
+                        .size(200) // Debe coincidir con el override de la UI
+                        .build()
+                    context.imageLoader.enqueue(request)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }

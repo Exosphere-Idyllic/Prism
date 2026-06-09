@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -39,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.ui.res.painterResource
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -254,16 +254,21 @@ fun SongList(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        items(playlist, key = { it.id }) { song ->
+        items(
+            items = playlist,
+            key = { it.id },
+            contentType = { "song" }
+        ) { song ->
+            val isSelected = song.id == currentSong?.id
             SongListItem(
                 song = song,
-                isSelected = song.id == currentSong?.id,
+                isSelected = isSelected,
                 isPlaying = isPlaying,
                 onSongSelected = onSongSelected
             )
         }
         // Bottom spacing so mini-player doesn't cover last item
-        item { Spacer(modifier = Modifier.height(96.dp)) }
+        item(contentType = "spacer") { Spacer(modifier = Modifier.height(96.dp)) }
     }
 }
 
@@ -274,10 +279,7 @@ fun SongListItem(
     isPlaying: Boolean,
     onSongSelected: (Song) -> Unit
 ) {
-    val bgColor = remember(isSelected) {
-        if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f)
-        else Color.Transparent
-    }
+    val bgColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f) else Color.Transparent
 
     Row(
         modifier = Modifier
@@ -301,13 +303,13 @@ fun SongListItem(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(song.artworkUri)
                         .crossfade(true)
-                        .size(200) // Redimensionar a nivel de hardware
+                        .size(120) // Aún más pequeño para fluidez extrema
                         .build(),
                     contentDescription = "Album art",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
-                    placeholder = painterResource(android.R.color.darker_gray),
-                    error = painterResource(android.R.color.darker_gray)
+                    placeholder = ColorPainter(Color.DarkGray),
+                    error = ColorPainter(Color.DarkGray)
                 )
             } else {
                 Icon(
@@ -320,6 +322,7 @@ fun SongListItem(
         }
 
         Spacer(modifier = Modifier.width(14.dp))
+// ... rest of the function
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -403,13 +406,13 @@ fun MiniPlayer(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(song.artworkUri)
                                 .crossfade(true)
-                                .size(150)
+                                .size(120)
                                 .build(),
                             contentDescription = "Mini player art",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
-                            placeholder = painterResource(android.R.color.darker_gray),
-                            error = painterResource(android.R.color.darker_gray)
+                            placeholder = ColorPainter(Color.DarkGray),
+                            error = ColorPainter(Color.DarkGray)
                         )
                     } else {
                         Icon(
@@ -744,8 +747,8 @@ fun PlayerCard(
                         contentDescription = "Album Art",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
-                        placeholder = painterResource(android.R.color.darker_gray),
-                        error = painterResource(android.R.color.darker_gray)
+                        placeholder = ColorPainter(Color.DarkGray),
+                        error = ColorPainter(Color.DarkGray)
                     )
                 } else {
                     Icon(
@@ -934,7 +937,11 @@ fun PlaylistQueue(
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        items(playlist, key = { it.id }) { song ->
+        items(
+            items = playlist,
+            key = { it.id },
+            contentType = { "queue_song" }
+        ) { song ->
             QueueListItem(
                 song = song,
                 isSelected = song.id == currentSong?.id,
@@ -952,12 +959,8 @@ fun QueueListItem(
     isPlaying: Boolean,
     onSongSelected: (Song) -> Unit
 ) {
-    val backgroundColor = remember(isSelected) {
-        if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
-    }
-    val borderColor = remember(isSelected) {
-        if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
-    }
+    val backgroundColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
+    val borderColor = if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
 
     Card(
         modifier = Modifier
@@ -985,13 +988,13 @@ fun QueueListItem(
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(song.artworkUri)
                             .crossfade(true)
-                            .size(150)
+                            .size(120)
                             .build(),
                         contentDescription = "Artwork Thumbnail",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
-                        placeholder = painterResource(android.R.color.darker_gray),
-                        error = painterResource(android.R.color.darker_gray)
+                        placeholder = ColorPainter(Color.DarkGray),
+                        error = ColorPainter(Color.DarkGray)
                     )
                 } else {
                     Icon(
