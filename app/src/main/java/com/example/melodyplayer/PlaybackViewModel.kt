@@ -15,6 +15,8 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +38,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     val progressState = _progressState.asStateFlow()
 
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
+    private var songIdToIndexMap = emptyMap<String, Int>()
+    
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
@@ -116,11 +120,29 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             // If local storage is empty, fallback to mock so application is testable
             val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
+            val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
             
             withContext(Dispatchers.Main) {
                 _allSongs.value = finalSongs
+                songIdToIndexMap = newIdMap
                 filterSongs()
                 mediaController?.let { updateControllerMediaItems(it, finalSongs) }
+                
+                // Pre-calentamiento de carátulas (las primeras 15)
+                prewarmImageCache(finalSongs.take(15))
+            }
+        }
+    }
+
+    private fun prewarmImageCache(songs: List<Song>) {
+        val context = getApplication<Application>().applicationContext
+        songs.forEach { song ->
+            if (song.artworkUri.isNotEmpty()) {
+                Glide.with(context)
+                    .load(song.artworkUri)
+                    .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                    .override(200) // Debe coincidir con el override de la UI
+                    .preload()
             }
         }
     }
@@ -144,10 +166,16 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 controller.setMediaItems(mediaItems)
                 controller.prepare()
 
-                val currentMediaItem = controller.currentMediaItem
-                val currentSong = songs.find { it.id == currentMediaItem?.mediaId } ?: songs.firstOrNull()
+                val currentMediaId = controller.currentMediaItem?.mediaId
+                val currentSong = if (currentMediaId != null) {
+                    val index = songIdToIndexMap[currentMediaId]
+                    if (index != null && index != -1) songs[index] else songs.firstOrNull()
+                } else {
+                    songs.firstOrNull()
+                }
+                
                 _uiState.value = _uiState.value.copy(
-                    playlist = _uiState.value.playlist, // Keep search filtering in UI
+                    playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs,
                     currentSong = currentSong
                 )
                 _progressState.value = _progressState.value.copy(
@@ -256,8 +284,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     fun playSong(song: Song) {
         val controller = mediaController ?: return
-        val songs = if (_allSongs.value.isNotEmpty()) _allSongs.value else MockPlaylist.songs
-        val index = songs.indexOfFirst { it.id == song.id }
+        val index = songIdToIndexMap[song.id] ?: -1
         if (index != -1) {
             controller.seekTo(index, 0)
             controller.play()

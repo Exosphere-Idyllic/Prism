@@ -304,7 +304,8 @@ fun SongListItem(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                    it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                        .override(200) // Redimensionar a nivel de hardware para fluidez
                         .placeholder(android.R.color.darker_gray)
                         .error(android.R.color.darker_gray)
                         .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
@@ -370,10 +371,6 @@ fun MiniPlayer(
     modifier: Modifier = Modifier
 ) {
     val song = state.currentSong ?: return
-    val progress by progressStateFlow.collectAsStateWithLifecycle()
-    val progressFraction = if (progress.duration > 0) {
-        (progress.currentPosition.toFloat() / progress.duration.toFloat()).coerceIn(0f, 1f)
-    } else 0f
 
     Card(
         modifier = modifier
@@ -386,24 +383,8 @@ fun MiniPlayer(
         shape = RoundedCornerShape(20.dp)
     ) {
         Column {
-            // Progress line
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(Color.White.copy(alpha = 0.08f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progressFraction)
-                        .fillMaxHeight()
-                        .background(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF818CF8), Color(0xFF6366F1))
-                            )
-                        )
-                )
-            }
+            // Progress line - Solamente este componente se observa el flujo de progreso
+            MiniPlayerProgressBar(progressStateFlow)
 
             Row(
                 modifier = Modifier
@@ -426,7 +407,8 @@ fun MiniPlayer(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                            it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                                .override(150)
                                 .placeholder(android.R.color.darker_gray)
                                 .error(android.R.color.darker_gray)
                                 .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
@@ -479,6 +461,32 @@ fun MiniPlayer(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
+    val progress by progressStateFlow.collectAsStateWithLifecycle()
+    val progressFraction = if (progress.duration > 0) {
+        (progress.currentPosition.toFloat() / progress.duration.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(2.dp)
+            .background(Color.White.copy(alpha = 0.08f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(progressFraction)
+                .fillMaxHeight()
+                .background(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(Color(0xFF818CF8), Color(0xFF6366F1))
+                    )
+                )
+        )
     }
 }
 
@@ -736,7 +744,8 @@ fun PlayerCard(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                        it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                            .override(600) // Calidad decente para el player card pero no resolución original
                             .placeholder(android.R.color.darker_gray)
                             .error(android.R.color.darker_gray)
                             .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
@@ -983,7 +992,8 @@ fun QueueListItem(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        it.diskCacheStrategy(DiskCacheStrategy.ALL)
+                        it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                            .override(150)
                             .placeholder(android.R.color.darker_gray)
                             .error(android.R.color.darker_gray)
                             .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
