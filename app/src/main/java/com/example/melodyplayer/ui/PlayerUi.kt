@@ -39,9 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
-import com.bumptech.glide.integration.compose.GlideImage
-import com.bumptech.glide.load.engine.DiskCacheStrategy
+import androidx.compose.ui.res.painterResource
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.example.melodyplayer.PlaybackUiState
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
@@ -240,7 +241,6 @@ fun SearchBar(
     }
 }
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun SongList(
     playlist: List<Song>,
@@ -267,7 +267,6 @@ fun SongList(
     }
 }
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun SongListItem(
     song: Song,
@@ -298,18 +297,18 @@ fun SongListItem(
             contentAlignment = Alignment.Center
         ) {
             if (song.artworkUri.isNotEmpty()) {
-                GlideImage(
-                    model = song.artworkUri,
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(song.artworkUri)
+                        .crossfade(true)
+                        .size(200) // Redimensionar a nivel de hardware
+                        .build(),
                     contentDescription = "Album art",
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                        .override(200) // Redimensionar a nivel de hardware para fluidez
-                        .placeholder(android.R.color.darker_gray)
-                        .error(android.R.color.darker_gray)
-                        .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
-                }
+                    modifier = Modifier.fillMaxSize(),
+                    placeholder = painterResource(android.R.color.darker_gray),
+                    error = painterResource(android.R.color.darker_gray)
+                )
             } else {
                 Icon(
                     imageVector = Icons.Default.MusicNote,
@@ -361,7 +360,6 @@ fun SongListItem(
     }
 }
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun MiniPlayer(
     state: PlaybackUiState,
@@ -401,18 +399,18 @@ fun MiniPlayer(
                     contentAlignment = Alignment.Center
                 ) {
                     if (song.artworkUri.isNotEmpty()) {
-                        GlideImage(
-                            model = song.artworkUri,
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(song.artworkUri)
+                                .crossfade(true)
+                                .size(150)
+                                .build(),
                             contentDescription = "Mini player art",
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                                .override(150)
-                                .placeholder(android.R.color.darker_gray)
-                                .error(android.R.color.darker_gray)
-                                .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
-                        }
+                            modifier = Modifier.fillMaxSize(),
+                            placeholder = painterResource(android.R.color.darker_gray),
+                            error = painterResource(android.R.color.darker_gray)
+                        )
                     } else {
                         Icon(
                             imageVector = Icons.Default.MusicNote,
@@ -703,7 +701,6 @@ fun PlayerScreen(
 //  PLAYER CARD
 // ─────────────────────────────────────────────
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun PlayerCard(
     state: PlaybackUiState,
@@ -738,18 +735,18 @@ fun PlayerCard(
             ) {
                 val artworkUrl = state.currentSong?.artworkUri
                 if (!artworkUrl.isNullOrEmpty()) {
-                    GlideImage(
-                        model = artworkUrl,
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(artworkUrl)
+                            .crossfade(true)
+                            .size(600)
+                            .build(),
                         contentDescription = "Album Art",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                            .override(600) // Calidad decente para el player card pero no resolución original
-                            .placeholder(android.R.color.darker_gray)
-                            .error(android.R.color.darker_gray)
-                            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
-                    }
+                        modifier = Modifier.fillMaxSize(),
+                        placeholder = painterResource(android.R.color.darker_gray),
+                        error = painterResource(android.R.color.darker_gray)
+                    )
                 } else {
                     Icon(
                         imageVector = Icons.Default.MusicNote,
@@ -924,7 +921,6 @@ fun PlaybackControls(
 //  PLAYLIST QUEUE (inside Player screen)
 // ─────────────────────────────────────────────
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun PlaylistQueue(
     playlist: List<Song>,
@@ -949,7 +945,6 @@ fun PlaylistQueue(
     }
 }
 
-@OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun QueueListItem(
     song: Song,
@@ -986,18 +981,18 @@ fun QueueListItem(
                 contentAlignment = Alignment.Center
             ) {
                 if (song.artworkUri.isNotEmpty()) {
-                    GlideImage(
-                        model = song.artworkUri,
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(song.artworkUri)
+                            .crossfade(true)
+                            .size(150)
+                            .build(),
                         contentDescription = "Artwork Thumbnail",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        it.diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                            .override(150)
-                            .placeholder(android.R.color.darker_gray)
-                            .error(android.R.color.darker_gray)
-                            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
-                    }
+                        modifier = Modifier.fillMaxSize(),
+                        placeholder = painterResource(android.R.color.darker_gray),
+                        error = painterResource(android.R.color.darker_gray)
+                    )
                 } else {
                     Icon(
                         imageVector = Icons.Default.MusicNote,

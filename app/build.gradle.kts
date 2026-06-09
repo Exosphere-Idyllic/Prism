@@ -88,9 +88,9 @@ dependencies {
   implementation(libs.androidx.media3.session)
   implementation(libs.androidx.media3.ui)
 
-  // Glide
-  implementation(libs.glide)
-  implementation(libs.glide.compose)
+  // Coil 3
+  implementation(libs.coil.compose)
+  implementation(libs.coil.network.okhttp)
 
   // Material Icons Extended
   implementation(libs.androidx.compose.material.icons.extended)

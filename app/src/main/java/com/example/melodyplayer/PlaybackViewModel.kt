@@ -15,8 +15,8 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
+import coil3.imageLoader
+import coil3.request.ImageRequest
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.Dispatchers
@@ -138,11 +138,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         val context = getApplication<Application>().applicationContext
         songs.forEach { song ->
             if (song.artworkUri.isNotEmpty()) {
-                Glide.with(context)
-                    .load(song.artworkUri)
-                    .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                    .override(200) // Debe coincidir con el override de la UI
-                    .preload()
+                val request = ImageRequest.Builder(context)
+                    .data(song.artworkUri)
+                    .size(200) // Debe coincidir con el override de la UI
+                    .build()
+                context.imageLoader.enqueue(request)
             }
         }
     }
