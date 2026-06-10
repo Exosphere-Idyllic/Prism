@@ -16,6 +16,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil3.imageLoader
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
@@ -39,7 +40,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     private var songIdToIndexMap = emptyMap<String, Int>()
-    
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
@@ -62,7 +63,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
             loadLocalSongs()
         } else {
-            // Default to mock playlist before permissions are granted so UI shows something
             _allSongs.value = MockPlaylist.songs
             filterSongs()
         }
@@ -100,8 +100,23 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
                         val albumId = cursor.getLong(albumIdColumn)
 
-                        val mediaUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
-                        val artworkUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId).toString()
+                        val mediaUri = ContentUris.withAppendedId(
+                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                            id
+                        ).toString()
+
+                        // FIX: Solo construir artworkUri si albumId es válido (> 0).
+                        // albumId == 0 o -1 indica que la canción no tiene metadata de álbum,
+                        // lo que causa que todas esas canciones muestren la misma carátula
+                        // genérica (o la de otro álbum con ID 0).
+                        val artworkUri = if (albumId > 0) {
+                            ContentUris.withAppendedId(
+                                Uri.parse("content://media/external/audio/albumart"),
+                                albumId
+                            ).toString()
+                        } else {
+                            ""
+                        }
 
                         songList.add(
                             Song(
@@ -118,18 +133,19 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 e.printStackTrace()
             }
 
-            // If local storage is empty, fallback to mock so application is testable
             val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
             val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
-            
+
             withContext(Dispatchers.Main) {
                 _allSongs.value = finalSongs
                 songIdToIndexMap = newIdMap
                 filterSongs()
                 mediaController?.let { updateControllerMediaItems(it, finalSongs) }
-                
-                // Pre-calentamiento de carátulas (las primeras 15)
-                prewarmImageCache(finalSongs.take(15))
+
+                // FIX: Precalentar con el mismo tamaño que usa la UI (120px),
+                // así los hits del cache de memoria son efectivos. Con 200px antes,
+                // Coil guardaba una entrada diferente y la UI re-decodificaba igual.
+                prewarmImageCache(finalSongs.take(20))
             }
         }
     }
@@ -141,7 +157,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 try {
                     val request = ImageRequest.Builder(context)
                         .data(song.artworkUri)
-                        .size(200) // Debe coincidir con el override de la UI
+                        .size(120) // FIX: debe coincidir exactamente con el override de SongListItem
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
                         .build()
                     context.imageLoader.enqueue(request)
                 } catch (e: Exception) {
@@ -161,7 +179,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         MediaMetadata.Builder()
                             .setTitle(song.title)
                             .setArtist(song.artist)
-                            .setArtworkUri(Uri.parse(song.artworkUri))
+                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) Uri.parse(song.artworkUri) else null)
                             .build()
                     )
                     .build()
@@ -177,7 +195,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 } else {
                     songs.firstOrNull()
                 }
-                
+
                 _uiState.value = _uiState.value.copy(
                     playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs,
                     currentSong = currentSong
@@ -241,11 +259,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         controller.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
-                if (isPlaying) {
-                    startProgressUpdate()
-                } else {
-                    stopProgressUpdate()
-                }
+                if (isPlaying) startProgressUpdate() else stopProgressUpdate()
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -266,9 +280,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
         })
 
-        if (controller.isPlaying) {
-            startProgressUpdate()
-        }
+        if (controller.isPlaying) startProgressUpdate()
     }
 
     private fun updateStateFromController(controller: MediaController) {
@@ -341,9 +353,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         super.onCleared()
-        controllerFuture?.let {
-            MediaController.releaseFuture(it)
-        }
+        controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
     }
 }

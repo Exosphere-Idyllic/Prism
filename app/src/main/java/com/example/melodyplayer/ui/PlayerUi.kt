@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.example.melodyplayer.PlaybackUiState
@@ -48,6 +49,9 @@ import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
+
+// Instancias compartidas a nivel de archivo para evitar allocations por recomposición
+private val DarkGrayPainter = ColorPainter(Color.DarkGray)
 
 // ─────────────────────────────────────────────
 //  SONG LIST SCREEN (Home)
@@ -63,7 +67,6 @@ fun SongListScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // Determine which permission to request
     val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_AUDIO
     } else {
@@ -81,9 +84,7 @@ fun SongListScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
-        if (granted) {
-            viewModel.loadLocalSongs()
-        }
+        if (granted) viewModel.loadLocalSongs()
     }
 
     val backgroundBrush = remember {
@@ -120,7 +121,6 @@ fun SongListScreen(
                     fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.weight(1f)
                 )
-                // Song count badge
                 if (state.playlist.isNotEmpty()) {
                     Box(
                         modifier = Modifier
@@ -152,9 +152,7 @@ fun SongListScreen(
             if (!hasPermission) {
                 PermissionRequest(
                     onRequestPermission = { permissionLauncher.launch(permission) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                    modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else if (state.playlist.isEmpty() && searchQuery.isEmpty()) {
                 EmptyLibrary(modifier = Modifier.weight(1f).fillMaxWidth())
@@ -267,7 +265,6 @@ fun SongList(
                 onSongSelected = onSongSelected
             )
         }
-        // Bottom spacing so mini-player doesn't cover last item
         item(contentType = "spacer") { Spacer(modifier = Modifier.height(96.dp)) }
     }
 }
@@ -281,6 +278,22 @@ fun SongListItem(
 ) {
     val bgColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f) else Color.Transparent
 
+    // FIX: ImageRequest estabilizado con remember(song.artworkUri).
+    // Sin esto, se creaba una nueva instancia en cada recomposición (scroll, estado
+    // de reproducción, etc.), invalidando el cache de Coil y causando micro-jank.
+    // crossfade = false en lista: el fade añade overhead de GPU sin beneficio
+    // perceptible cuando los ítems están en movimiento durante el scroll.
+    val context = LocalContext.current
+    val listImageRequest = remember(song.artworkUri) {
+        ImageRequest.Builder(context)
+            .data(song.artworkUri.ifEmpty { null })
+            .crossfade(false)
+            .size(120)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -290,7 +303,6 @@ fun SongListItem(
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Album art thumbnail
         Box(
             modifier = Modifier
                 .size(52.dp)
@@ -300,16 +312,14 @@ fun SongListItem(
         ) {
             if (song.artworkUri.isNotEmpty()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(song.artworkUri)
-                        .crossfade(true)
-                        .size(120) // Aún más pequeño para fluidez extrema
-                        .build(),
+                    model = listImageRequest,
                     contentDescription = "Album art",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
-                    placeholder = ColorPainter(Color.DarkGray),
-                    error = ColorPainter(Color.DarkGray)
+                    // FIX: reutilizar instancia a nivel de archivo en vez de crear
+                    // ColorPainter(Color.DarkGray) en cada composición
+                    placeholder = DarkGrayPainter,
+                    error = DarkGrayPainter
                 )
             } else {
                 Icon(
@@ -322,7 +332,6 @@ fun SongListItem(
         }
 
         Spacer(modifier = Modifier.width(14.dp))
-// ... rest of the function
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -345,7 +354,6 @@ fun SongListItem(
 
         if (isSelected && isPlaying) {
             Spacer(modifier = Modifier.width(8.dp))
-            // Animated playing indicator dots
             Row(
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -373,18 +381,27 @@ fun MiniPlayer(
 ) {
     val song = state.currentSong ?: return
 
+    // FIX: request estabilizado para el mini player
+    val context = LocalContext.current
+    val miniImageRequest = remember(song.artworkUri) {
+        ImageRequest.Builder(context)
+            .data(song.artworkUri.ifEmpty { null })
+            .crossfade(false)
+            .size(120)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .shadow(24.dp, RoundedCornerShape(20.dp))
             .clickable { onOpenPlayer() },
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E3A)
-        ),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E3A)),
         shape = RoundedCornerShape(20.dp)
     ) {
         Column {
-            // Progress line - Solamente este componente se observa el flujo de progreso
             MiniPlayerProgressBar(progressStateFlow)
 
             Row(
@@ -393,7 +410,6 @@ fun MiniPlayer(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Artwork
                 Box(
                     modifier = Modifier
                         .size(44.dp)
@@ -403,16 +419,12 @@ fun MiniPlayer(
                 ) {
                     if (song.artworkUri.isNotEmpty()) {
                         AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(song.artworkUri)
-                                .crossfade(true)
-                                .size(120)
-                                .build(),
+                            model = miniImageRequest,
                             contentDescription = "Mini player art",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
-                            placeholder = ColorPainter(Color.DarkGray),
-                            error = ColorPainter(Color.DarkGray)
+                            placeholder = DarkGrayPainter,
+                            error = DarkGrayPainter
                         )
                     } else {
                         Icon(
@@ -444,7 +456,6 @@ fun MiniPlayer(
                     )
                 }
 
-                // Play/Pause button
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -630,7 +641,6 @@ fun PlayerScreen(
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header row with back button
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -653,7 +663,7 @@ fun PlayerScreen(
                     letterSpacing = 2.sp
                 )
                 Spacer(modifier = Modifier.weight(1f))
-                Spacer(modifier = Modifier.size(48.dp)) // balance
+                Spacer(modifier = Modifier.size(48.dp))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -673,7 +683,6 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Queue section
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -714,6 +723,20 @@ fun PlayerCard(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // FIX: request de alta resolución para la pantalla de player (600px),
+    // separado del request de lista (120px) para no contaminar el cache de miniaturas
+    val context = LocalContext.current
+    val artworkUrl = state.currentSong?.artworkUri
+    val playerImageRequest = remember(artworkUrl) {
+        ImageRequest.Builder(context)
+            .data(artworkUrl?.ifEmpty { null })
+            .crossfade(true) // crossfade sí tiene sentido en el player al cambiar canción
+            .size(600)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -727,7 +750,6 @@ fun PlayerCard(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Artwork
             Box(
                 modifier = Modifier
                     .size(240.dp)
@@ -736,19 +758,14 @@ fun PlayerCard(
                     .shadow(8.dp, shape = RoundedCornerShape(20.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                val artworkUrl = state.currentSong?.artworkUri
                 if (!artworkUrl.isNullOrEmpty()) {
                     AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(artworkUrl)
-                            .crossfade(true)
-                            .size(600)
-                            .build(),
+                        model = playerImageRequest,
                         contentDescription = "Album Art",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
-                        placeholder = ColorPainter(Color.DarkGray),
-                        error = ColorPainter(Color.DarkGray)
+                        placeholder = DarkGrayPainter,
+                        error = DarkGrayPainter
                     )
                 } else {
                     Icon(
@@ -817,12 +834,9 @@ fun PlaybackProgress(
     var dragPosition by remember { mutableFloatStateOf(0f) }
     val totalDuration = remember(duration) { duration.coerceAtLeast(1L) }
 
-    // Only update slider from external position when not dragging
     val progressFraction = if (isDragging) dragPosition
         else (currentPosition.toFloat() / totalDuration).coerceIn(0f, 1f)
 
-    // SliderDefaults.colors() is @Composable — must be called directly in composable scope
-    // Compose's own skip-recomposition mechanism handles caching when inputs don't change
     val sliderColors = SliderDefaults.colors(
         thumbColor = Color(0xFFA5B4FC),
         activeTrackColor = Color(0xFF6366F1),
@@ -962,6 +976,18 @@ fun QueueListItem(
     val backgroundColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
     val borderColor = if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
 
+    // FIX: request estabilizado para la cola del player
+    val context = LocalContext.current
+    val queueImageRequest = remember(song.artworkUri) {
+        ImageRequest.Builder(context)
+            .data(song.artworkUri.ifEmpty { null })
+            .crossfade(false)
+            .size(120)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -985,16 +1011,12 @@ fun QueueListItem(
             ) {
                 if (song.artworkUri.isNotEmpty()) {
                     AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(song.artworkUri)
-                            .crossfade(true)
-                            .size(120)
-                            .build(),
+                        model = queueImageRequest,
                         contentDescription = "Artwork Thumbnail",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
-                        placeholder = ColorPainter(Color.DarkGray),
-                        error = ColorPainter(Color.DarkGray)
+                        placeholder = DarkGrayPainter,
+                        error = DarkGrayPainter
                     )
                 } else {
                     Icon(
