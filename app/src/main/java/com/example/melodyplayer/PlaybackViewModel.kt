@@ -100,8 +100,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private var loadSongsJob: Job? = null
+
     fun loadLocalSongs() {
-        viewModelScope.launch {
+        loadSongsJob?.cancel()
+        loadSongsJob = viewModelScope.launch {
             val context = getApplication<Application>().applicationContext
 
             // 1. Cargar desde cache inmediatamente si no se ha hecho
@@ -133,6 +136,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     MediaStore.Audio.Media.ALBUM_ID
                 )
                 val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+                val albumArtBaseUri = Uri.parse("content://media/external/audio/albumart")
 
                 try {
                     context.contentResolver.query(
@@ -160,7 +164,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
                             val artworkUri = if (albumId > 0) {
                                 ContentUris.withAppendedId(
-                                    Uri.parse("content://media/external/audio/albumart"),
+                                    albumArtBaseUri,
                                     albumId
                                 ).toString()
                             } else {

@@ -489,15 +489,16 @@ fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
             .height(2.dp)
             .background(Color.White.copy(alpha = 0.08f))
     ) {
+        val progressBrush = remember {
+            Brush.horizontalGradient(
+                colors = listOf(Color(0xFF818CF8), Color(0xFF6366F1))
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth(progressFraction)
                 .fillMaxHeight()
-                .background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(Color(0xFF818CF8), Color(0xFF6366F1))
-                    )
-                )
+                .background(brush = progressBrush)
         )
     }
 }
@@ -903,15 +904,16 @@ fun PlaybackControls(
             )
         }
         Spacer(modifier = Modifier.width(24.dp))
+        val playButtonBrush = remember {
+            Brush.radialGradient(
+                colors = listOf(Color(0xFF818CF8), Color(0xFF4F46E5))
+            )
+        }
         Box(
             modifier = Modifier
                 .size(72.dp)
                 .clip(CircleShape)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF818CF8), Color(0xFF4F46E5))
-                    )
-                )
+                .background(brush = playButtonBrush)
                 .clickable { onPlayPauseToggle() },
             contentAlignment = Alignment.Center
         ) {
@@ -1069,5 +1071,7 @@ private fun formatTime(ms: Long): String {
     val totalSeconds = ms / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
-    return String.format("%02d:%02d", minutes, seconds)
+    val minStr = if (minutes < 10) "0$minutes" else minutes.toString()
+    val secStr = if (seconds < 10) "0$seconds" else seconds.toString()
+    return "$minStr:$secStr"
 }
