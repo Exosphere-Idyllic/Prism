@@ -287,6 +287,7 @@ fun SongListItem(
     val listImageRequest = remember(song.artworkUri) {
         ImageRequest.Builder(context)
             .data(song.artworkUri.ifEmpty { null })
+            .memoryCacheKey(song.artworkUri)
             .crossfade(false)
             .size(120)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -386,6 +387,7 @@ fun MiniPlayer(
     val miniImageRequest = remember(song.artworkUri) {
         ImageRequest.Builder(context)
             .data(song.artworkUri.ifEmpty { null })
+            .memoryCacheKey(song.artworkUri)
             .crossfade(false)
             .size(120)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -983,6 +985,7 @@ fun QueueListItem(
     val queueImageRequest = remember(song.artworkUri) {
         ImageRequest.Builder(context)
             .data(song.artworkUri.ifEmpty { null })
+            .memoryCacheKey(song.artworkUri)
             .crossfade(false)
             .size(120)
             .memoryCachePolicy(CachePolicy.ENABLED)

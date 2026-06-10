@@ -21,6 +21,9 @@ import androidx.media3.session.SessionToken
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import android.graphics.BitmapFactory
+import coil3.asImage
+import coil3.memory.MemoryCache
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
 import com.example.melodyplayer.data.SongList
@@ -100,9 +103,14 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private var lastLoadTime = 0L
     private var loadSongsJob: Job? = null
 
     fun loadLocalSongs() {
+        val now = System.currentTimeMillis()
+        if (now - lastLoadTime < 1000) return
+        lastLoadTime = now
+
         loadSongsJob?.cancel()
         loadSongsJob = viewModelScope.launch {
             val context = getApplication<Application>().applicationContext
@@ -117,7 +125,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         songIdToIndexMap = newIdMap
                         filterSongs()
                         mediaController?.let { updateControllerMediaItems(it, cachedList) }
-                        prewarmImageCache(cachedList.take(50))
+                        preDecodeImages(cachedList.take(20))
                         isCacheLoaded = true
                     }
                 } catch (e: Exception) {
@@ -190,14 +198,14 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
 
-            // 3. Comparar cambios y actualizar solo si hay diferencias
-            if (finalSongs != _allSongs.value) {
+            // 3. Comparar cambios y actualizar solo si hay diferencias por ID
+            if (!listsHaveSameIds(finalSongs, _allSongs.value)) {
                 val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
                 _allSongs.value = finalSongs
                 songIdToIndexMap = newIdMap
                 filterSongs()
                 mediaController?.let { updateControllerMediaItems(it, finalSongs) }
-                prewarmImageCache(finalSongs.take(50))
+                preDecodeImages(finalSongs.take(20))
 
                 // Guardar la nueva lista en DataStore en segundo plano
                 if (songList.isNotEmpty()) {
@@ -214,27 +222,78 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun prewarmImageCache(songs: List<Song>) {
+    private fun listsHaveSameIds(list1: List<Song>, list2: List<Song>): Boolean {
+        if (list1.size != list2.size) return false
+        for (i in list1.indices) {
+            if (list1[i].id != list2[i].id) return false
+        }
+        return true
+    }
+
+    private fun preDecodeImages(songs: List<Song>) {
         val context = getApplication<Application>().applicationContext
-        songs.forEach { song ->
-            if (song.artworkUri.isNotEmpty()) {
-                try {
-                    val request = ImageRequest.Builder(context)
-                        .data(song.artworkUri)
-                        .size(120) // FIX: debe coincidir exactamente con el override de SongListItem
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .build()
-                    context.imageLoader.enqueue(request)
-                } catch (e: Exception) {
-                    e.printStackTrace()
+        val imageLoader = context.imageLoader
+        viewModelScope.launch(Dispatchers.IO) {
+            songs.forEach { song ->
+                if (song.artworkUri.isNotEmpty()) {
+                    try {
+                        val uri = Uri.parse(song.artworkUri)
+                        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                            val options = BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            BitmapFactory.decodeStream(inputStream, null, options)
+                            
+                            val height = options.outHeight
+                            val width = options.outWidth
+                            if (height > 0 && width > 0) {
+                                var inSampleSize = 1
+                                val reqHeight = 120
+                                val reqWidth = 120
+                                if (height > reqHeight || width > reqWidth) {
+                                    val halfHeight = height / 2
+                                    val halfWidth = width / 2
+                                    while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                                        inSampleSize *= 2
+                                    }
+                                }
+                                
+                                context.contentResolver.openInputStream(uri)?.use { inputStream2 ->
+                                    val decodeOptions = BitmapFactory.Options().apply {
+                                        this.inSampleSize = inSampleSize
+                                    }
+                                    val bitmap = BitmapFactory.decodeStream(inputStream2, null, decodeOptions)
+                                    if (bitmap != null) {
+                                        val key = MemoryCache.Key(song.artworkUri)
+                                        imageLoader.memoryCache?.set(key, MemoryCache.Value(bitmap.asImage()))
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                 }
             }
         }
     }
 
-
     private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
+        val count = controller.mediaItemCount
+        if (count == songs.size) {
+            var identical = true
+            for (i in 0 until count) {
+                if (controller.getMediaItemAt(i).mediaId != songs[i].id) {
+                    identical = false
+                    break
+                }
+            }
+            if (identical) {
+                syncUiWithController(controller, songs)
+                return
+            }
+        }
+
         viewModelScope.launch(Dispatchers.Default) {
             val mediaItems = songs.map { song ->
                 MediaItem.Builder()
@@ -252,24 +311,27 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             withContext(Dispatchers.Main) {
                 controller.setMediaItems(mediaItems)
                 controller.prepare()
-
-                val currentMediaId = controller.currentMediaItem?.mediaId
-                val currentSong = if (currentMediaId != null) {
-                    val index = songIdToIndexMap[currentMediaId]
-                    if (index != null && index != -1) songs[index] else songs.firstOrNull()
-                } else {
-                    songs.firstOrNull()
-                }
-
-                _uiState.value = _uiState.value.copy(
-                    playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs,
-                    currentSong = currentSong
-                )
-                _progressState.value = _progressState.value.copy(
-                    duration = controller.duration.coerceAtLeast(0L)
-                )
+                syncUiWithController(controller, songs)
             }
         }
+    }
+
+    private fun syncUiWithController(controller: MediaController, songs: List<Song>) {
+        val currentMediaId = controller.currentMediaItem?.mediaId
+        val currentSong = if (currentMediaId != null) {
+            val index = songIdToIndexMap[currentMediaId]
+            if (index != null && index != -1 && index < songs.size) songs[index] else songs.firstOrNull()
+        } else {
+            songs.firstOrNull()
+        }
+
+        _uiState.value = _uiState.value.copy(
+            playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs,
+            currentSong = currentSong
+        )
+        _progressState.value = _progressState.value.copy(
+            duration = controller.duration.coerceAtLeast(0L)
+        )
     }
 
     fun setSearchQuery(query: String) {
