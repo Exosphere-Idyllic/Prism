@@ -5,7 +5,10 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.ContentUris
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -20,15 +23,19 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
+import com.example.melodyplayer.data.SongList
+import com.example.melodyplayer.data.songDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+
 
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -53,6 +60,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         checkAndLoadSongs()
     }
 
+    private var contentObserver: ContentObserver? = null
+    private var isCacheLoaded = false
+
     fun checkAndLoadSongs() {
         val context = getApplication<Application>().applicationContext
         val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -61,6 +71,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+            registerContentObserver()
             loadLocalSongs()
         } else {
             _allSongs.value = MockPlaylist.songs
@@ -68,85 +79,134 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun loadLocalSongs() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val context = getApplication<Application>().applicationContext
-            val songList = mutableListOf<Song>()
-            val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-            val projection = arrayOf(
-                MediaStore.Audio.Media._ID,
-                MediaStore.Audio.Media.TITLE,
-                MediaStore.Audio.Media.ARTIST,
-                MediaStore.Audio.Media.ALBUM_ID
+    private fun registerContentObserver() {
+        if (contentObserver != null) return
+        val context = getApplication<Application>().applicationContext
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                loadLocalSongs()
+            }
+        }
+        try {
+            context.contentResolver.registerContentObserver(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                true,
+                observer
             )
-            val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+            contentObserver = observer
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
-            try {
-                context.contentResolver.query(
-                    uri,
-                    projection,
-                    selection,
-                    null,
-                    "${MediaStore.Audio.Media.TITLE} ASC"
-                )?.use { cursor ->
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                    val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                    val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                    val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+    fun loadLocalSongs() {
+        viewModelScope.launch {
+            val context = getApplication<Application>().applicationContext
 
-                    while (cursor.moveToNext()) {
-                        val id = cursor.getLong(idColumn)
-                        val title = cursor.getString(titleColumn) ?: "Unknown Title"
-                        val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
-                        val albumId = cursor.getLong(albumIdColumn)
-
-                        val mediaUri = ContentUris.withAppendedId(
-                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                            id
-                        ).toString()
-
-                        // FIX: Solo construir artworkUri si albumId es válido (> 0).
-                        // albumId == 0 o -1 indica que la canción no tiene metadata de álbum,
-                        // lo que causa que todas esas canciones muestren la misma carátula
-                        // genérica (o la de otro álbum con ID 0).
-                        val artworkUri = if (albumId > 0) {
-                            ContentUris.withAppendedId(
-                                Uri.parse("content://media/external/audio/albumart"),
-                                albumId
-                            ).toString()
-                        } else {
-                            ""
-                        }
-
-                        songList.add(
-                            Song(
-                                id = id.toString(),
-                                title = title,
-                                artist = artist,
-                                mediaUri = mediaUri,
-                                artworkUri = artworkUri
-                            )
-                        )
+            // 1. Cargar desde cache inmediatamente si no se ha hecho
+            if (!isCacheLoaded) {
+                try {
+                    val cachedList = context.songDataStore.data.first().songs
+                    if (cachedList.isNotEmpty()) {
+                        val newIdMap = cachedList.withIndex().associate { it.value.id to it.index }
+                        _allSongs.value = cachedList
+                        songIdToIndexMap = newIdMap
+                        filterSongs()
+                        mediaController?.let { updateControllerMediaItems(it, cachedList) }
+                        prewarmImageCache(cachedList.take(50))
+                        isCacheLoaded = true
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            }
+
+            // 2. Realizar consulta en background a MediaStore
+            val songList = withContext(Dispatchers.IO) {
+                val list = mutableListOf<Song>()
+                val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                val projection = arrayOf(
+                    MediaStore.Audio.Media._ID,
+                    MediaStore.Audio.Media.TITLE,
+                    MediaStore.Audio.Media.ARTIST,
+                    MediaStore.Audio.Media.ALBUM_ID
+                )
+                val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        projection,
+                        selection,
+                        null,
+                        "${MediaStore.Audio.Media.TITLE} ASC"
+                    )?.use { cursor ->
+                        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                        val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                        val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                        val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(idColumn)
+                            val title = cursor.getString(titleColumn) ?: "Unknown Title"
+                            val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
+                            val albumId = cursor.getLong(albumIdColumn)
+
+                            val mediaUri = ContentUris.withAppendedId(
+                                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                                id
+                            ).toString()
+
+                            val artworkUri = if (albumId > 0) {
+                                ContentUris.withAppendedId(
+                                    Uri.parse("content://media/external/audio/albumart"),
+                                    albumId
+                                ).toString()
+                            } else {
+                                ""
+                            }
+
+                            list.add(
+                                Song(
+                                    id = id.toString(),
+                                    title = title,
+                                    artist = artist,
+                                    mediaUri = mediaUri,
+                                    artworkUri = artworkUri
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                list
             }
 
             val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
-            val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
 
-            withContext(Dispatchers.Main) {
+            // 3. Comparar cambios y actualizar solo si hay diferencias
+            if (finalSongs != _allSongs.value) {
+                val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
                 _allSongs.value = finalSongs
                 songIdToIndexMap = newIdMap
                 filterSongs()
                 mediaController?.let { updateControllerMediaItems(it, finalSongs) }
+                prewarmImageCache(finalSongs.take(50))
 
-                // FIX: Precalentar con el mismo tamaño que usa la UI (120px),
-                // así los hits del cache de memoria son efectivos. Con 200px antes,
-                // Coil guardaba una entrada diferente y la UI re-decodificaba igual.
-                prewarmImageCache(finalSongs.take(20))
+                // Guardar la nueva lista en DataStore en segundo plano
+                if (songList.isNotEmpty()) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            context.songDataStore.updateData { SongList(songList) }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
             }
+            isCacheLoaded = true
         }
     }
 
@@ -168,6 +228,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
 
     private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
         viewModelScope.launch(Dispatchers.Default) {
@@ -355,6 +416,15 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         super.onCleared()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
+        
+        contentObserver?.let { observer ->
+            try {
+                getApplication<Application>().applicationContext.contentResolver.unregisterContentObserver(observer)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            contentObserver = null
+        }
     }
 }
 

@@ -1,8 +1,10 @@
 package com.example.melodyplayer.data
 
 import androidx.compose.runtime.Immutable
+import kotlinx.serialization.Serializable
 
 @Immutable
+@Serializable
 data class Song(
     val id: String,
     val title: String,
@@ -10,6 +12,12 @@ data class Song(
     val mediaUri: String,
     val artworkUri: String
 )
+
+@Serializable
+data class SongList(
+    val songs: List<Song> = emptyList()
+)
+
 
 object MockPlaylist {
     val songs = listOf(
