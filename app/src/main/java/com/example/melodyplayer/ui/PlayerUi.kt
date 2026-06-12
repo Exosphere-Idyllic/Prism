@@ -86,6 +86,51 @@ fun shimmerBrush(targetValue: Float = 1000f): Brush {
 }
 
 @Composable
+fun SongArtwork(
+    artworkUri: String,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    size: Int = 120,
+    crossfade: Boolean = false,
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp
+) {
+    val context = LocalContext.current
+    val imageRequest = remember(artworkUri, size, crossfade) {
+        ImageRequest.Builder(context)
+            .data(artworkUri.ifEmpty { null })
+            .memoryCacheKey(artworkUri.ifEmpty { null })
+            .crossfade(crossfade)
+            .size(size)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        if (artworkUri.isNotEmpty()) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                placeholder = DarkGrayPainter,
+                error = DarkGrayPainter
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.3f),
+                modifier = Modifier.size(iconSize)
+            )
+        }
+    }
+}
+
+@Composable
 fun SongListShimmer(modifier: Modifier = Modifier) {
     val brush = shimmerBrush()
     LazyColumn(
@@ -333,17 +378,16 @@ fun SongList(
 ) {
     val listState = rememberLazyListState()
 
-    val shouldLoadMore = remember {
-        derivedStateOf {
+    LaunchedEffect(listState) {
+        snapshotFlow {
             val totalItemsCount = listState.layoutInfo.totalItemsCount
             val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             totalItemsCount > 0 && lastVisibleItemIndex >= (totalItemsCount - 5)
         }
-    }
-
-    LaunchedEffect(shouldLoadMore.value) {
-        if (shouldLoadMore.value) {
-            onLoadMore()
+        .collect { shouldLoad ->
+            if (shouldLoad) {
+                onLoadMore()
+            }
         }
     }
 
@@ -379,23 +423,6 @@ fun SongListItem(
 ) {
     val bgColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f) else Color.Transparent
 
-    // FIX: ImageRequest estabilizado con remember(song.artworkUri).
-    // Sin esto, se creaba una nueva instancia en cada recomposición (scroll, estado
-    // de reproducción, etc.), invalidando el cache de Coil y causando micro-jank.
-    // crossfade = false en lista: el fade añade overhead de GPU sin beneficio
-    // perceptible cuando los ítems están en movimiento durante el scroll.
-    val context = LocalContext.current
-    val listImageRequest = remember(song.artworkUri) {
-        ImageRequest.Builder(context)
-            .data(song.artworkUri.ifEmpty { null })
-            .memoryCacheKey(song.artworkUri)
-            .crossfade(false)
-            .size(120)
-            .memoryCachePolicy(CachePolicy.ENABLED)
-            .diskCachePolicy(CachePolicy.ENABLED)
-            .build()
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -405,33 +432,17 @@ fun SongListItem(
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        SongArtwork(
+            artworkUri = song.artworkUri,
+            contentDescription = "Album art",
+            size = 120,
+            crossfade = false,
+            iconSize = 24.dp,
             modifier = Modifier
                 .size(52.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(alpha = 0.06f)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (song.artworkUri.isNotEmpty()) {
-                AsyncImage(
-                    model = listImageRequest,
-                    contentDescription = "Album art",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    // FIX: reutilizar instancia a nivel de archivo en vez de crear
-                    // ColorPainter(Color.DarkGray) en cada composición
-                    placeholder = DarkGrayPainter,
-                    error = DarkGrayPainter
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.MusicNote,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.3f),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
+                .background(Color.White.copy(alpha = 0.06f))
+        )
 
         Spacer(modifier = Modifier.width(14.dp))
 
@@ -483,19 +494,6 @@ fun MiniPlayer(
 ) {
     val song = state.currentSong ?: return
 
-    // FIX: request estabilizado para el mini player
-    val context = LocalContext.current
-    val miniImageRequest = remember(song.artworkUri) {
-        ImageRequest.Builder(context)
-            .data(song.artworkUri.ifEmpty { null })
-            .memoryCacheKey(song.artworkUri)
-            .crossfade(false)
-            .size(120)
-            .memoryCachePolicy(CachePolicy.ENABLED)
-            .diskCachePolicy(CachePolicy.ENABLED)
-            .build()
-    }
-
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -513,31 +511,17 @@ fun MiniPlayer(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                SongArtwork(
+                    artworkUri = song.artworkUri,
+                    contentDescription = "Mini player art",
+                    size = 120,
+                    crossfade = false,
+                    iconSize = 20.dp,
                     modifier = Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White.copy(alpha = 0.06f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (song.artworkUri.isNotEmpty()) {
-                        AsyncImage(
-                            model = miniImageRequest,
-                            contentDescription = "Mini player art",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            placeholder = DarkGrayPainter,
-                            error = DarkGrayPainter
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.4f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                        .background(Color.White.copy(alpha = 0.06f))
+                )
 
                 Spacer(modifier = Modifier.width(12.dp))
 
@@ -827,19 +811,7 @@ fun PlayerCard(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // FIX: request de alta resolución para la pantalla de player (600px),
-    // separado del request de lista (120px) para no contaminar el cache de miniaturas
-    val context = LocalContext.current
     val artworkUrl = state.currentSong?.artworkUri
-    val playerImageRequest = remember(artworkUrl) {
-        ImageRequest.Builder(context)
-            .data(artworkUrl?.ifEmpty { null })
-            .crossfade(true) // crossfade sí tiene sentido en el player al cambiar canción
-            .size(600)
-            .memoryCachePolicy(CachePolicy.ENABLED)
-            .diskCachePolicy(CachePolicy.ENABLED)
-            .build()
-    }
 
     Card(
         modifier = modifier
@@ -854,32 +826,18 @@ fun PlayerCard(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
+            SongArtwork(
+                artworkUri = artworkUrl ?: "",
+                contentDescription = "Album Art",
+                size = 600,
+                crossfade = true,
+                iconSize = 80.dp,
                 modifier = Modifier
                     .size(240.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(Color.White.copy(alpha = 0.05f))
-                    .shadow(8.dp, shape = RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (!artworkUrl.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = playerImageRequest,
-                        contentDescription = "Album Art",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        placeholder = DarkGrayPainter,
-                        error = DarkGrayPainter
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = "Default Art",
-                        tint = Color.White.copy(alpha = 0.3f),
-                        modifier = Modifier.size(80.dp)
-                    )
-                }
-            }
+                    .shadow(8.dp, shape = RoundedCornerShape(20.dp))
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -1081,19 +1039,6 @@ fun QueueListItem(
     val backgroundColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f)
     val borderColor = if (isSelected) Color(0xFF818CF8).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
 
-    // FIX: request estabilizado para la cola del player
-    val context = LocalContext.current
-    val queueImageRequest = remember(song.artworkUri) {
-        ImageRequest.Builder(context)
-            .data(song.artworkUri.ifEmpty { null })
-            .memoryCacheKey(song.artworkUri)
-            .crossfade(false)
-            .size(120)
-            .memoryCachePolicy(CachePolicy.ENABLED)
-            .diskCachePolicy(CachePolicy.ENABLED)
-            .build()
-    }
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1108,31 +1053,17 @@ fun QueueListItem(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
+            SongArtwork(
+                artworkUri = song.artworkUri,
+                contentDescription = "Artwork Thumbnail",
+                size = 120,
+                crossfade = false,
+                iconSize = 24.dp,
                 modifier = Modifier
                     .size(50.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color.White.copy(alpha = 0.05f)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (song.artworkUri.isNotEmpty()) {
-                    AsyncImage(
-                        model = queueImageRequest,
-                        contentDescription = "Artwork Thumbnail",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        placeholder = DarkGrayPainter,
-                        error = DarkGrayPainter
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.3f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
 
             Spacer(modifier = Modifier.width(16.dp))
 
@@ -1175,7 +1106,5 @@ private fun formatTime(ms: Long): String {
     val totalSeconds = ms / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
-    val minStr = if (minutes < 10) "0$minutes" else minutes.toString()
-    val secStr = if (seconds < 10) "0$seconds" else seconds.toString()
-    return "$minStr:$secStr"
+    return "%02d:%02d".format(java.util.Locale.US, minutes, seconds)
 }

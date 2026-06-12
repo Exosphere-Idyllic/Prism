@@ -92,8 +92,6 @@ dependencies {
 
   // Coil 3
   implementation(libs.coil.compose)
-  implementation(libs.coil.network.okhttp)
-  implementation(libs.coil.video)
 
   // Material Icons Extended
   implementation(libs.androidx.compose.material.icons.extended)
@@ -109,7 +107,8 @@ dependencies {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {
-    kaptProcessJvmArgs.add("-Djava.io.tmpdir=c:\\Users\\USER\\Codespaces\\Dev\\Prism\\build\\tmp")
-    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=c:\\Users\\USER\\Codespaces\\Dev\\Prism\\build\\tmp")
+    val tmpDir = layout.buildDirectory.dir("tmp").get().asFile.absolutePath
+    kaptProcessJvmArgs.add("-Djava.io.tmpdir=$tmpDir")
+    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=$tmpDir")
 }
 

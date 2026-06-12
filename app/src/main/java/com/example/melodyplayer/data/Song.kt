@@ -19,8 +19,3 @@ data class Song(
     val mediaUri: String,
     val artworkUri: String
 )
-
-@Serializable
-data class SongList(
-    val songs: List<Song> = emptyList()
-)
