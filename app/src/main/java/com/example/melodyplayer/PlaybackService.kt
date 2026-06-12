@@ -1,6 +1,7 @@
 package com.example.melodyplayer
 
 import android.content.Intent
+import android.os.HandlerThread
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -11,6 +12,7 @@ import androidx.media3.session.MediaSessionService
 
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
+    private var playerThread: HandlerThread? = null
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -21,8 +23,13 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
+        val thread = HandlerThread("ExoPlayerThread")
+        thread.start()
+        playerThread = thread
+
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true) // Automatically handles audio focus
+            .setLooper(thread.looper)
             .build()
         
         mediaSession = MediaSession.Builder(this, player)
@@ -39,6 +46,8 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        playerThread?.quitSafely()
+        playerThread = null
         super.onDestroy()
     }
 }

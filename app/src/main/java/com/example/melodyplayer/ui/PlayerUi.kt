@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -162,17 +163,19 @@ fun SongListScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
-                val onSongSelected = remember(viewModel, onNavigateToPlayer) {
+                val onSongSelected: (Song) -> Unit = remember(viewModel, onNavigateToPlayer) {
                     { song: Song ->
                         viewModel.playSong(song)
                         onNavigateToPlayer()
                     }
                 }
+                val onLoadMore = remember(viewModel) { { viewModel.loadNextPage() } }
                 SongList(
                     playlist = state.playlist,
                     currentSong = state.currentSong,
                     isPlaying = state.isPlaying,
                     onSongSelected = onSongSelected,
+                    onLoadMore = onLoadMore,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -245,9 +248,27 @@ fun SongList(
     currentSong: Song?,
     isPlaying: Boolean,
     onSongSelected: (Song) -> Unit,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val listState = rememberLazyListState()
+
+    val shouldLoadMore = remember {
+        derivedStateOf {
+            val totalItemsCount = listState.layoutInfo.totalItemsCount
+            val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItemsCount > 0 && lastVisibleItemIndex >= (totalItemsCount - 5)
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore.value) {
+        if (shouldLoadMore.value) {
+            onLoadMore()
+        }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)

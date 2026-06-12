@@ -2,6 +2,8 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.kotlin.android)
+  alias(libs.plugins.kotlin.kapt)
 }
 
 android {
@@ -99,5 +101,15 @@ dependencies {
   // DataStore & Serialization
   implementation(libs.androidx.datastore)
   implementation(libs.kotlinx.serialization.json)
+
+  // Room
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  "kapt"(libs.androidx.room.compiler)
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {
+    kaptProcessJvmArgs.add("-Djava.io.tmpdir=c:\\Users\\USER\\Codespaces\\Dev\\Prism\\build\\tmp")
+    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=c:\\Users\\USER\\Codespaces\\Dev\\Prism\\build\\tmp")
 }
 

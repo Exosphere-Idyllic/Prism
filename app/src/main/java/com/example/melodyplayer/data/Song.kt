@@ -2,11 +2,14 @@ package com.example.melodyplayer.data
 
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
+import androidx.room.Entity
+import androidx.room.PrimaryKey
 
 @Immutable
 @Serializable
+@Entity(tableName = "songs")
 data class Song(
-    val id: String,
+    @PrimaryKey val id: String,
     val title: String,
     val artist: String,
     val mediaUri: String,

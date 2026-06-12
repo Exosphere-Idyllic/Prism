@@ -26,14 +26,13 @@ import coil3.asImage
 import coil3.memory.MemoryCache
 import com.example.melodyplayer.data.MockPlaylist
 import com.example.melodyplayer.data.Song
-import com.example.melodyplayer.data.SongList
-import com.example.melodyplayer.data.songDataStore
+import com.example.melodyplayer.data.AppDatabase
+import com.example.melodyplayer.data.AlbumArtCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.google.common.util.concurrent.ListenableFuture
@@ -58,13 +57,19 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
 
+    // Paginación y Lazy Loading
+    private val _playlistSongs = MutableStateFlow<List<Song>>(emptyList())
+    private var currentOffset = 0
+    private val pageSize = 30
+    private var isLastPage = false
+    private var isLoadingPage = false
+
     init {
         initializeController()
         checkAndLoadSongs()
     }
 
     private var contentObserver: ContentObserver? = null
-    private var isCacheLoaded = false
 
     fun checkAndLoadSongs() {
         val context = getApplication<Application>().applicationContext
@@ -78,7 +83,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             loadLocalSongs()
         } else {
             _allSongs.value = MockPlaylist.songs
-            filterSongs()
+            _uiState.value = _uiState.value.copy(playlist = MockPlaylist.songs)
         }
     }
 
@@ -114,27 +119,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         loadSongsJob?.cancel()
         loadSongsJob = viewModelScope.launch {
             val context = getApplication<Application>().applicationContext
+            val db = AppDatabase.getDatabase(context)
 
-            // 1. Cargar desde cache inmediatamente si no se ha hecho
-            if (!isCacheLoaded) {
-                try {
-                    val cachedList = context.songDataStore.data.first().songs
-                    if (cachedList.isNotEmpty()) {
-                        val newIdMap = cachedList.withIndex().associate { it.value.id to it.index }
-                        _allSongs.value = cachedList
-                        songIdToIndexMap = newIdMap
-                        filterSongs()
-                        mediaController?.let { updateControllerMediaItems(it, cachedList) }
-                        preDecodeImages(cachedList.take(20))
-                        isCacheLoaded = true
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
+            // 1. Cargar primera página inmediatamente desde Room
+            loadFirstPage()
 
-            // 2. Realizar consulta en background a MediaStore
-            val songList = withContext(Dispatchers.IO) {
+            // 2. Realizar consulta en background a MediaStore en Dispatchers.IO
+            withContext(Dispatchers.IO) {
                 val list = mutableListOf<Song>()
                 val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                 val projection = arrayOf(
@@ -193,41 +184,84 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-                list
-            }
 
-            val finalSongs = if (songList.isNotEmpty()) songList else MockPlaylist.songs
+                val finalSongs = if (list.isNotEmpty()) list else MockPlaylist.songs
 
-            // 3. Comparar cambios y actualizar solo si hay diferencias por ID
-            if (!listsHaveSameIds(finalSongs, _allSongs.value)) {
-                val newIdMap = finalSongs.withIndex().associate { it.value.id to it.index }
-                _allSongs.value = finalSongs
-                songIdToIndexMap = newIdMap
-                filterSongs()
-                mediaController?.let { updateControllerMediaItems(it, finalSongs) }
-                preDecodeImages(finalSongs.take(20))
-
-                // Guardar la nueva lista en DataStore en segundo plano
-                if (songList.isNotEmpty()) {
-                    launch(Dispatchers.IO) {
-                        try {
-                            context.songDataStore.updateData { SongList(songList) }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
+                if (list.isNotEmpty()) {
+                    db.songDao().insertAll(finalSongs)
+                    val ids = finalSongs.map { it.id }
+                    db.songDao().deleteRemovedSongs(ids)
                 }
             }
-            isCacheLoaded = true
+
+            // 3. Recargar primera página con los nuevos datos
+            loadFirstPage()
+
+            // 4. Actualizar todos los media items del controller
+            val allSongs = withContext(Dispatchers.IO) {
+                db.songDao().getAllSongs().ifEmpty { MockPlaylist.songs }
+            }
+            _allSongs.value = allSongs
+            songIdToIndexMap = allSongs.withIndex().associate { it.value.id to it.index }
+            mediaController?.let { updateControllerMediaItems(it, allSongs) }
+            preDecodeImages(allSongs.take(20))
         }
     }
 
-    private fun listsHaveSameIds(list1: List<Song>, list2: List<Song>): Boolean {
-        if (list1.size != list2.size) return false
-        for (i in list1.indices) {
-            if (list1[i].id != list2[i].id) return false
+    fun loadFirstPage() {
+        if (isLoadingPage) return
+        viewModelScope.launch {
+            isLoadingPage = true
+            currentOffset = 0
+            isLastPage = false
+            val songs = withContext(Dispatchers.IO) {
+                val db = AppDatabase.getDatabase(getApplication())
+                val query = _searchQuery.value
+                if (query.isEmpty()) {
+                    db.songDao().getSongsPaginated(pageSize, currentOffset)
+                } else {
+                    db.songDao().searchSongsPaginated("%$query%", pageSize, currentOffset)
+                }
+            }
+            _playlistSongs.value = songs
+            currentOffset += songs.size
+            if (songs.size < pageSize) {
+                isLastPage = true
+            }
+            _uiState.value = _uiState.value.copy(
+                playlist = songs
+            )
+            isLoadingPage = false
         }
-        return true
+    }
+
+    fun loadNextPage() {
+        if (isLoadingPage || isLastPage) return
+        viewModelScope.launch {
+            isLoadingPage = true
+            val songs = withContext(Dispatchers.IO) {
+                val db = AppDatabase.getDatabase(getApplication())
+                val query = _searchQuery.value
+                if (query.isEmpty()) {
+                    db.songDao().getSongsPaginated(pageSize, currentOffset)
+                } else {
+                    db.songDao().searchSongsPaginated("%$query%", pageSize, currentOffset)
+                }
+            }
+            if (songs.isNotEmpty()) {
+                val currentList = _playlistSongs.value
+                val newList = currentList + songs
+                _playlistSongs.value = newList
+                currentOffset += songs.size
+                _uiState.value = _uiState.value.copy(
+                    playlist = newList
+                )
+            }
+            if (songs.size < pageSize) {
+                isLastPage = true
+            }
+            isLoadingPage = false
+        }
     }
 
     private fun preDecodeImages(songs: List<Song>) {
@@ -264,6 +298,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                                     }
                                     val bitmap = BitmapFactory.decodeStream(inputStream2, null, decodeOptions)
                                     if (bitmap != null) {
+                                        AlbumArtCache.put(song.artworkUri, bitmap)
                                         val key = MemoryCache.Key(song.artworkUri)
                                         imageLoader.memoryCache?.set(key, MemoryCache.Value(bitmap.asImage()))
                                     }
@@ -326,7 +361,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
 
         _uiState.value = _uiState.value.copy(
-            playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs,
+            playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs.take(pageSize),
             currentSong = currentSong
         )
         _progressState.value = _progressState.value.copy(
@@ -336,25 +371,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
-        filterSongs()
-    }
-
-    private fun filterSongs() {
-        viewModelScope.launch {
-            val query = _searchQuery.value
-            val allSongs = _allSongs.value
-            val filtered = withContext(Dispatchers.Default) {
-                if (query.isEmpty()) {
-                    allSongs
-                } else {
-                    allSongs.filter {
-                        it.title.contains(query, ignoreCase = true) ||
-                        it.artist.contains(query, ignoreCase = true)
-                    }
-                }
-            }
-            _uiState.value = _uiState.value.copy(playlist = filtered)
-        }
+        loadFirstPage()
     }
 
     private fun initializeController() {
