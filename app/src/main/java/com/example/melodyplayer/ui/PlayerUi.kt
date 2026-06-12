@@ -4,6 +4,8 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,6 +55,82 @@ import kotlinx.coroutines.flow.StateFlow
 
 // Instancias compartidas a nivel de archivo para evitar allocations por recomposición
 private val DarkGrayPainter = ColorPainter(Color.DarkGray)
+
+
+// ─────────────────────────────────────────────
+//  SHIMMER SKELETON LOADER
+// ─────────────────────────────────────────────
+
+@Composable
+fun shimmerBrush(targetValue: Float = 1000f): Brush {
+    val shimmerColors = listOf(
+        Color.White.copy(alpha = 0.05f),
+        Color.White.copy(alpha = 0.15f),
+        Color.White.copy(alpha = 0.05f)
+    )
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = targetValue,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerTranslation"
+    )
+    return Brush.linearGradient(
+        colors = shimmerColors,
+        start = Offset.Zero,
+        end = Offset(x = translateAnim.value, y = translateAnim.value)
+    )
+}
+
+@Composable
+fun SongListShimmer(modifier: Modifier = Modifier) {
+    val brush = shimmerBrush()
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        userScrollEnabled = false
+    ) {
+        items(10) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(brush)
+                )
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .height(14.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(brush)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.35f)
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(brush)
+                    )
+                }
+            }
+        }
+    }
+}
 
 // ─────────────────────────────────────────────
 //  SONG LIST SCREEN (Home)
@@ -122,7 +200,7 @@ fun SongListScreen(
                     fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.weight(1f)
                 )
-                if (state.playlist.isNotEmpty()) {
+                if (state.totalSongsCount > 0) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
@@ -130,7 +208,7 @@ fun SongListScreen(
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "${state.playlist.size} canciones",
+                            text = "${state.totalSongsCount} canciones",
                             color = Color(0xFFA5B4FC),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -155,6 +233,8 @@ fun SongListScreen(
                     onRequestPermission = { permissionLauncher.launch(permission) },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
+            } else if (state.isLoading && state.playlist.isEmpty()) {
+                SongListShimmer(modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (state.playlist.isEmpty() && searchQuery.isEmpty()) {
                 EmptyLibrary(modifier = Modifier.weight(1f).fillMaxWidth())
             } else if (state.playlist.isEmpty()) {

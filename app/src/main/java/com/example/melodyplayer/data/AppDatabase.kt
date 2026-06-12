@@ -8,6 +8,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 
 @Dao
 interface SongDao {
@@ -34,6 +35,12 @@ interface SongDao {
 
     @Query("DELETE FROM songs WHERE id NOT IN (:ids)")
     suspend fun deleteRemovedSongs(ids: List<String>)
+
+    @Transaction
+    suspend fun updateSongsTransaction(songs: List<Song>) {
+        insertAll(songs)
+        deleteRemovedSongs(songs.map { it.id })
+    }
 }
 
 @Database(entities = [Song::class], version = 1, exportSchema = false)
