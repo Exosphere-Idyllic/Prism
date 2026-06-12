@@ -52,6 +52,7 @@ import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 // Instancias compartidas a nivel de archivo para evitar allocations por recomposición
 private val DarkGrayPainter = ColorPainter(Color.DarkGray)
@@ -384,6 +385,7 @@ fun SongList(
             val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             totalItemsCount > 0 && lastVisibleItemIndex >= (totalItemsCount - 5)
         }
+        .distinctUntilChanged()
         .collect { shouldLoad ->
             if (shouldLoad) {
                 onLoadMore()

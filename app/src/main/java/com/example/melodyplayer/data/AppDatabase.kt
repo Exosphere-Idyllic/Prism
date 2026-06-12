@@ -43,7 +43,7 @@ interface SongDao {
     }
 }
 
-@Database(entities = [Song::class], version = 1, exportSchema = false)
+@Database(entities = [Song::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
 
@@ -57,7 +57,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "melody_player_db"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

@@ -22,6 +22,7 @@ import androidx.media3.session.SessionToken
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import java.util.concurrent.atomic.AtomicBoolean
 import com.example.melodyplayer.data.Song
 import com.example.melodyplayer.data.AppDatabase
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +67,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private var currentOffset = 0
     private val pageSize = 30
     private var isLastPage = false
-    private var isLoadingPage = false
+    private val isLoadingPage = AtomicBoolean(false)
     private var lastControllerSongs: List<Song> = emptyList()
 
     private var contentObserver: ContentObserver? = null
@@ -216,15 +217,14 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             // 4. Actualizar todos los media items del controller sin consulta redundante
             _allSongs.value = finalSongs
-            songIdToIndexMap = finalSongs.withIndex().associate { it.value.id to it.index }
+            songIdToIndexMap = finalSongs.indices.associateBy { finalSongs[it].id }
             mediaController?.let { updateControllerMediaItems(it, finalSongs) }
             preDecodeImages(finalSongs.take(20))
         }
     }
 
     private suspend fun loadFirstPageSuspended() {
-        if (isLoadingPage) return
-        isLoadingPage = true
+        if (isLoadingPage.getAndSet(true)) return
         try {
             currentOffset = 0
             isLastPage = false
@@ -249,13 +249,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 totalSongsCount = count
             )
         } finally {
-            isLoadingPage = false
+            isLoadingPage.set(false)
         }
     }
 
     fun loadNextPage() {
-        if (isLoadingPage || isLastPage) return
-        isLoadingPage = true
+        if (isLastPage || isLoadingPage.getAndSet(true)) return
         viewModelScope.launch {
             try {
                 val songs = withContext(Dispatchers.IO) {
@@ -278,7 +277,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     isLastPage = true
                 }
             } finally {
-                isLoadingPage = false
+                isLoadingPage.set(false)
             }
         }
     }
@@ -342,7 +341,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
 
         _uiState.value = _uiState.value.copy(
-            playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs.take(pageSize),
+            playlist = _uiState.value.playlist.ifEmpty { songs.take(pageSize) },
             currentSong = currentSong
         )
         _progressState.value = _progressState.value.copy(
@@ -379,6 +378,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun setupController(controller: MediaController) {
+        playerListener?.let { controller.removeListener(it) }
+
         val songsToUse = _allSongs.value
         if (controller.mediaItemCount == 0) {
             updateControllerMediaItems(controller, songsToUse)
