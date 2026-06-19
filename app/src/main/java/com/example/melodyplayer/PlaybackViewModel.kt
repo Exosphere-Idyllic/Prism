@@ -4,14 +4,20 @@ import android.Manifest
 import android.app.Application
 import android.content.ComponentName
 import android.content.ContentUris
+import android.content.Context
 import android.content.pm.PackageManager
 import android.database.ContentObserver
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -19,24 +25,33 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
-import java.util.concurrent.atomic.AtomicBoolean
-import com.example.melodyplayer.data.Song
 import com.example.melodyplayer.data.AppDatabase
+import com.example.melodyplayer.data.Song
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,8 +59,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         private const val TAG = "PlaybackViewModel"
     }
 
-    private val context = application.applicationContext
-    private val database = AppDatabase.getDatabase(context)
+    private val database = AppDatabase.getDatabase(application)
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState = _uiState.asStateFlow()
@@ -59,17 +73,30 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val songsFlow: Flow<PagingData<Song>> = _searchQuery
+        .flatMapLatest { query ->
+            Pager(
+                config = PagingConfig(
+                    pageSize = 30,
+                    enablePlaceholders = false,
+                    prefetchDistance = 10
+                )
+            ) {
+                if (query.isEmpty()) {
+                    database.songDao().getAllSongsPaging()
+                } else {
+                    database.songDao().searchSongsPaging("%$query%")
+                }
+            }.flow
+        }
+        .cachedIn(viewModelScope)
+
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
 
-    // Paginación y Lazy Loading
-    private var currentOffset = 0
-    private val pageSize = 30
-    private var isLastPage = false
-    private val isLoadingPage = AtomicBoolean(false)
     private var lastControllerSongs: List<Song> = emptyList()
-
     private var contentObserver: ContentObserver? = null
     private var playerListener: Player.Listener? = null
 
@@ -85,7 +112,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             @OptIn(kotlinx.coroutines.FlowPreview::class)
             contentObserverEvents
-                .debounce(500)
+                .debounce(500.milliseconds)
                 .collect {
                     loadLocalSongs()
                 }
@@ -93,17 +120,18 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun checkAndLoadSongs() {
-        val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        val app = getApplication<Application>()
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
-        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED) {
             registerContentObserver()
             loadLocalSongs()
         } else {
             _allSongs.value = emptyList()
-            _uiState.value = _uiState.value.copy(playlist = emptyList())
+            _uiState.value = _uiState.value.copy(playlist = emptyList(), totalSongsCount = 0)
         }
     }
 
@@ -118,7 +146,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
         }
         try {
-            context.contentResolver.registerContentObserver(
+            getApplication<Application>().contentResolver.registerContentObserver(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 true,
                 observer
@@ -134,32 +162,40 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     fun loadLocalSongs() {
         loadSongsJob?.cancel()
         loadSongsJob = viewModelScope.launch {
-            // Set loading state if the current playlist is empty
-            if (_uiState.value.playlist.isEmpty()) {
+            if (_uiState.value.totalSongsCount == 0) {
                 _uiState.value = _uiState.value.copy(isLoading = true)
             }
 
-            // 1. Cargar primera página inmediatamente desde Room (síncrona/secuencial en la corrutina)
-            loadFirstPageSuspended()
+            // 1. Cargar datos cacheados inmediatamente desde Room para una respuesta visual instantánea
+            val cachedSongs = withContext(Dispatchers.IO) {
+                database.songDao().getAllSongs()
+            }
+            _allSongs.value = cachedSongs
+            songIdToIndexMap = cachedSongs.indices.associateBy { cachedSongs[it].id }
+            _uiState.value = _uiState.value.copy(
+                totalSongsCount = cachedSongs.size,
+                isLoading = cachedSongs.isEmpty()
+            )
+            mediaController?.let { updateControllerMediaItems(it, cachedSongs) }
 
-            // Turn off loading once cache is loaded
-            _uiState.value = _uiState.value.copy(isLoading = false)
-
-            // 2. Realizar consulta en background a MediaStore en Dispatchers.IO
-            val finalSongs = withContext(Dispatchers.IO) {
+            // 2. Realizar escaneo incremental en segundo plano en Dispatchers.IO
+            val (finalSongs, songsUpserted) = withContext(Dispatchers.IO) {
                 val list = mutableListOf<Song>()
                 val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                 val projection = arrayOf(
                     MediaStore.Audio.Media._ID,
                     MediaStore.Audio.Media.TITLE,
                     MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM_ID
+                    MediaStore.Audio.Media.ALBUM,
+                    MediaStore.Audio.Media.ALBUM_ID,
+                    MediaStore.Audio.Media.DURATION,
+                    MediaStore.Audio.Media.DATE_MODIFIED
                 )
                 val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-                val albumArtBaseUri = Uri.parse("content://media/external/audio/albumart")
+                val albumArtBaseUri = "content://media/external/audio/albumart".toUri()
 
                 try {
-                    context.contentResolver.query(
+                    getApplication<Application>().contentResolver.query(
                         uri,
                         projection,
                         selection,
@@ -169,13 +205,19 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                         val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                         val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                        val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                         val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+                        val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                        val dateModifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
 
                         while (cursor.moveToNext()) {
                             val id = cursor.getLong(idColumn)
                             val title = cursor.getString(titleColumn) ?: "Unknown Title"
                             val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
+                            val album = cursor.getString(albumColumn) ?: "Unknown Album"
                             val albumId = cursor.getLong(albumIdColumn)
+                            val duration = cursor.getLong(durationColumn)
+                            val dateModified = cursor.getLong(dateModifiedColumn)
 
                             val mediaUri = ContentUris.withAppendedId(
                                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -196,8 +238,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                                     id = id.toString(),
                                     title = title,
                                     artist = artist,
+                                    album = album,
                                     mediaUri = mediaUri,
-                                    artworkUri = artworkUri
+                                    artworkUri = artworkUri,
+                                    duration = duration,
+                                    dateModified = dateModified
                                 )
                             )
                         }
@@ -206,96 +251,135 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     Log.e(TAG, "Failed to query MediaStore", e)
                 }
 
-                if (list.isNotEmpty()) {
-                    database.songDao().updateSongsTransaction(list)
-                }
-                list
-            }
+                // Sincronización Incremental
+                val roomSongs = database.songDao().getSongsSyncInfo().associateBy { it.id }
+                val mediaStoreSongsMap = list.associateBy { it.id }
 
-            // 3. Recargar primera página con los nuevos datos
-            loadFirstPageSuspended()
+                val toUpsert = mutableListOf<Song>()
+                val toDelete = mutableListOf<String>()
 
-            // 4. Actualizar todos los media items del controller sin consulta redundante
-            _allSongs.value = finalSongs
-            songIdToIndexMap = finalSongs.indices.associateBy { finalSongs[it].id }
-            mediaController?.let { updateControllerMediaItems(it, finalSongs) }
-            preDecodeImages(finalSongs.take(20))
-        }
-    }
-
-    private suspend fun loadFirstPageSuspended() {
-        if (isLoadingPage.getAndSet(true)) return
-        try {
-            currentOffset = 0
-            isLastPage = false
-            val (songs, count) = withContext(Dispatchers.IO) {
-                val query = _searchQuery.value
-                if (query.isEmpty()) {
-                    val list = database.songDao().getSongsPaginated(pageSize, currentOffset)
-                    val total = database.songDao().getSongsCount()
-                    Pair(list, total)
-                } else {
-                    val list = database.songDao().searchSongsPaginated("%$query%", pageSize, currentOffset)
-                    val total = database.songDao().searchSongsCount("%$query%")
-                    Pair(list, total)
-                }
-            }
-            currentOffset += songs.size
-            if (songs.size < pageSize) {
-                isLastPage = true
-            }
-            _uiState.value = _uiState.value.copy(
-                playlist = songs,
-                totalSongsCount = count
-            )
-        } finally {
-            isLoadingPage.set(false)
-        }
-    }
-
-    fun loadNextPage() {
-        if (isLastPage || isLoadingPage.getAndSet(true)) return
-        viewModelScope.launch {
-            try {
-                val songs = withContext(Dispatchers.IO) {
-                    val query = _searchQuery.value
-                    if (query.isEmpty()) {
-                        database.songDao().getSongsPaginated(pageSize, currentOffset)
-                    } else {
-                        database.songDao().searchSongsPaginated("%$query%", pageSize, currentOffset)
+                for (song in list) {
+                    val dbSong = roomSongs[song.id]
+                    if (dbSong == null || song.dateModified > dbSong.dateModified) {
+                        toUpsert.add(song)
                     }
                 }
-                if (songs.isNotEmpty()) {
-                    val currentList = _uiState.value.playlist
-                    val newList = currentList + songs
-                    currentOffset += songs.size
-                    _uiState.value = _uiState.value.copy(
-                        playlist = newList
-                    )
+
+                for (dbId in roomSongs.keys) {
+                    if (!mediaStoreSongsMap.containsKey(dbId)) {
+                        toDelete.add(dbId)
+                    }
                 }
-                if (songs.size < pageSize) {
-                    isLastPage = true
+
+                if (toUpsert.isNotEmpty()) {
+                    toUpsert.chunked(500).forEach { chunk ->
+                        database.songDao().insertAll(chunk)
+                    }
                 }
-            } finally {
-                isLoadingPage.set(false)
+                if (toDelete.isNotEmpty()) {
+                    toDelete.chunked(500).forEach { chunk ->
+                        database.songDao().deleteSongsByIds(chunk)
+                    }
+                    val cacheDir = getApplication<Application>().cacheDir
+                    toDelete.forEach { id ->
+                        File(cacheDir, "album_art/${id}_128.webp").delete()
+                        File(cacheDir, "album_art/${id}_256.webp").delete()
+                    }
+                }
+
+                Pair(list, toUpsert)
+            }
+
+            // 3. Actualizar la UI y el reproductor con la lista final escaneada
+            _allSongs.value = finalSongs
+            songIdToIndexMap = finalSongs.indices.associateBy { finalSongs[it].id }
+            _uiState.value = _uiState.value.copy(
+                totalSongsCount = finalSongs.size,
+                isLoading = false
+            )
+            mediaController?.let { updateControllerMediaItems(it, finalSongs) }
+
+            // Generar portadas WebP para las canciones insertadas/modificadas
+            if (songsUpserted.isNotEmpty()) {
+                val app = getApplication<Application>()
+                viewModelScope.launch(Dispatchers.IO) {
+                    songsUpserted.forEach { song ->
+                        generateWebpThumbnails(app, song)
+                    }
+                }
+            }
+
+            // Escaneo pasivo en background para regenerar portadas WebP que falten (ej. si se borró la caché)
+            val app = getApplication<Application>()
+            viewModelScope.launch(Dispatchers.IO) {
+                val allWithArtwork = database.songDao().getAllSongsWithArtwork()
+                allWithArtwork.forEach { song ->
+                    generateWebpThumbnails(app, song)
+                }
             }
         }
     }
 
-    private fun preDecodeImages(songs: List<Song>) {
-        val imageLoader = context.imageLoader
-        viewModelScope.launch(Dispatchers.IO) {
-            songs.forEach { song ->
-                if (song.artworkUri.isNotEmpty()) {
-                    val request = ImageRequest.Builder(context)
-                        .data(song.artworkUri)
-                        .size(120)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .build()
-                    imageLoader.enqueue(request)
+    private fun generateWebpThumbnails(context: Context, song: Song) {
+        if (song.artworkUri.isEmpty()) return
+        val cacheDir = File(context.cacheDir, "album_art")
+        if (!cacheDir.exists()) {
+            cacheDir.mkdirs()
+        }
+        val file128 = File(cacheDir, "${song.id}_128.webp")
+        val file256 = File(cacheDir, "${song.id}_256.webp")
+
+        if (file128.exists() && file256.exists()) return
+
+        try {
+            val artUri = song.artworkUri.toUri()
+            context.contentResolver.openInputStream(artUri)?.use { inputStream ->
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                if (bitmap != null) {
+                    val webpFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        Bitmap.CompressFormat.WEBP_LOSSY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        Bitmap.CompressFormat.WEBP
+                    }
+
+                    if (!file128.exists()) {
+                        val bitmap128 = bitmap.scale(128, 128, true)
+                        FileOutputStream(file128).use { out ->
+                            bitmap128.compress(webpFormat, 80, out)
+                        }
+                        bitmap128.recycle()
+                    }
+
+                    if (!file256.exists()) {
+                        val bitmap256 = bitmap.scale(256, 256, true)
+                        FileOutputStream(file256).use { out ->
+                            bitmap256.compress(webpFormat, 80, out)
+                        }
+                        bitmap256.recycle()
+                    }
+
+                    bitmap.recycle()
                 }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to generate WebP thumbnail for song ${song.id}: ${e.message}")
+        }
+    }
+
+    private fun preloadSongArtwork(song: Song) {
+        if (song.artworkUri.isEmpty()) return
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val cacheFile = File(context.cacheDir, "album_art/${song.id}_256.webp")
+            val model = if (cacheFile.exists()) Uri.fromFile(cacheFile).toString() else song.artworkUri
+            val request = ImageRequest.Builder(context)
+                .data(model)
+                .size(256)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .build()
+            context.imageLoader.enqueue(request)
         }
     }
 
@@ -310,12 +394,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             val mediaItems = songs.map { song ->
                 MediaItem.Builder()
                     .setMediaId(song.id)
-                    .setUri(Uri.parse(song.mediaUri))
+                    .setUri(song.mediaUri.toUri())
                     .setMediaMetadata(
                         MediaMetadata.Builder()
                             .setTitle(song.title)
                             .setArtist(song.artist)
-                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) Uri.parse(song.artworkUri) else null)
+                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) song.artworkUri.toUri() else null)
                             .build()
                     )
                     .build()
@@ -341,7 +425,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
 
         _uiState.value = _uiState.value.copy(
-            playlist = _uiState.value.playlist.ifEmpty { songs.take(pageSize) },
+            playlist = songs.take(30),
             currentSong = currentSong
         )
         _progressState.value = _progressState.value.copy(
@@ -351,12 +435,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
-        viewModelScope.launch {
-            loadFirstPageSuspended()
-        }
     }
 
     private fun initializeController() {
+        val context = getApplication<Application>()
         val sessionToken = SessionToken(
             context,
             ComponentName(context, PlaybackService::class.java)
@@ -395,10 +477,18 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val songs = _allSongs.value
-                val song = songs.find { it.id == mediaItem?.mediaId }
+                val songIndex = songs.indexOfFirst { it.id == mediaItem?.mediaId }
+                val song = if (songIndex != -1) songs[songIndex] else null
                 _uiState.value = _uiState.value.copy(
                     currentSong = song ?: _uiState.value.currentSong
                 )
+
+                // Precargar la portada de la siguiente canción
+                if (songIndex != -1 && songIndex + 1 < songs.size) {
+                    val nextSong = songs[songIndex + 1]
+                    preloadSongArtwork(nextSong)
+                }
+
                 _progressState.value = _progressState.value.copy(
                     duration = controller.duration.coerceAtLeast(0L)
                 )
@@ -420,10 +510,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         val currentMediaItem = controller.currentMediaItem
         val songs = _allSongs.value
         val song = songs.find { it.id == currentMediaItem?.mediaId }
-        _uiState.value = PlaybackUiState(
+        _uiState.value = _uiState.value.copy(
             currentSong = song ?: songs.firstOrNull(),
             isPlaying = controller.isPlaying,
-            playlist = if (_uiState.value.playlist.isNotEmpty()) _uiState.value.playlist else songs
+            playlist = _uiState.value.playlist.ifEmpty { songs.take(30) }
         )
         _progressState.value = ProgressState(
             currentPosition = controller.currentPosition.coerceAtLeast(0L),
@@ -475,7 +565,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         duration = controller.duration.coerceAtLeast(0L)
                     )
                 }
-                delay(250)
+                delay(250.milliseconds)
             }
         }
     }
@@ -492,10 +582,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
         controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
-        
+
         contentObserver?.let { observer ->
             try {
-                context.contentResolver.unregisterContentObserver(observer)
+                getApplication<Application>().contentResolver.unregisterContentObserver(observer)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to unregister content observer", e)
             }

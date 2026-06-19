@@ -1,6 +1,7 @@
 package com.example.melodyplayer.ui
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,7 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,6 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemContentType
+import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -52,11 +56,10 @@ import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
+import java.io.File
 
 // Instancias compartidas a nivel de archivo para evitar allocations por recomposición
 private val DarkGrayPainter = ColorPainter(Color.DarkGray)
-
 
 // ─────────────────────────────────────────────
 //  SHIMMER SKELETON LOADER
@@ -88,18 +91,31 @@ fun shimmerBrush(targetValue: Float = 1000f): Brush {
 
 @Composable
 fun SongArtwork(
-    artworkUri: String,
+    song: Song?,
     contentDescription: String?,
     modifier: Modifier = Modifier,
-    size: Int = 120,
+    size: Int = 128,
     crossfade: Boolean = false,
     iconSize: androidx.compose.ui.unit.Dp = 24.dp
 ) {
     val context = LocalContext.current
-    val imageRequest = remember(artworkUri, size, crossfade) {
+    val model = remember(song, size) {
+        if (song == null || song.artworkUri.isEmpty()) {
+            null
+        } else {
+            val sizeSuffix = if (size <= 128) "128" else "256"
+            val cacheFile = File(context.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
+            if (cacheFile.exists()) {
+                Uri.fromFile(cacheFile).toString()
+            } else {
+                song.artworkUri
+            }
+        }
+    }
+
+    val imageRequest = remember(model, size, crossfade) {
         ImageRequest.Builder(context)
-            .data(artworkUri.ifEmpty { null })
-            .memoryCacheKey(artworkUri.ifEmpty { null })
+            .data(model)
             .crossfade(crossfade)
             .size(size)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -111,7 +127,7 @@ fun SongArtwork(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        if (artworkUri.isNotEmpty()) {
+        if (model != null) {
             AsyncImage(
                 model = imageRequest,
                 contentDescription = contentDescription,
@@ -279,31 +295,35 @@ fun SongListScreen(
                     onRequestPermission = { permissionLauncher.launch(permission) },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
-            } else if (state.isLoading && state.playlist.isEmpty()) {
-                SongListShimmer(modifier = Modifier.weight(1f).fillMaxWidth())
-            } else if (state.playlist.isEmpty() && searchQuery.isEmpty()) {
-                EmptyLibrary(modifier = Modifier.weight(1f).fillMaxWidth())
-            } else if (state.playlist.isEmpty()) {
-                NoSearchResults(
-                    query = searchQuery,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
-                )
             } else {
-                val onSongSelected: (Song) -> Unit = remember(viewModel, onNavigateToPlayer) {
-                    { song: Song ->
-                        viewModel.playSong(song)
-                        onNavigateToPlayer()
+                val lazySongs = viewModel.songsFlow.collectAsLazyPagingItems()
+
+                if (lazySongs.itemCount == 0 && lazySongs.loadState.refresh is androidx.paging.LoadState.Loading) {
+                    SongListShimmer(modifier = Modifier.weight(1f).fillMaxWidth())
+                } else if (lazySongs.itemCount == 0 && !state.isLoading) {
+                    if (searchQuery.isEmpty()) {
+                        EmptyLibrary(modifier = Modifier.weight(1f).fillMaxWidth())
+                    } else {
+                        NoSearchResults(
+                            query = searchQuery,
+                            modifier = Modifier.weight(1f).fillMaxWidth()
+                        )
                     }
+                } else {
+                    val onSongSelected: (Song) -> Unit = remember(viewModel, onNavigateToPlayer) {
+                        { song: Song ->
+                            viewModel.playSong(song)
+                            onNavigateToPlayer()
+                        }
+                    }
+                    SongList(
+                        songs = lazySongs,
+                        currentSong = state.currentSong,
+                        isPlaying = state.isPlaying,
+                        onSongSelected = onSongSelected,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                val onLoadMore = remember(viewModel) { { viewModel.loadNextPage() } }
-                SongList(
-                    playlist = state.playlist,
-                    currentSong = state.currentSong,
-                    isPlaying = state.isPlaying,
-                    onSongSelected = onSongSelected,
-                    onLoadMore = onLoadMore,
-                    modifier = Modifier.weight(1f)
-                )
             }
         }
 
@@ -370,28 +390,13 @@ fun SearchBar(
 
 @Composable
 fun SongList(
-    playlist: List<Song>,
+    songs: LazyPagingItems<Song>,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongSelected: (Song) -> Unit,
-    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val totalItemsCount = listState.layoutInfo.totalItemsCount
-            val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItemsCount > 0 && lastVisibleItemIndex >= (totalItemsCount - 5)
-        }
-        .distinctUntilChanged()
-        .collect { shouldLoad ->
-            if (shouldLoad) {
-                onLoadMore()
-            }
-        }
-    }
 
     LazyColumn(
         state = listState,
@@ -400,17 +405,20 @@ fun SongList(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(
-            items = playlist,
-            key = { it.id },
-            contentType = { "song" }
-        ) { song ->
-            val isSelected = song.id == currentSong?.id
-            SongListItem(
-                song = song,
-                isSelected = isSelected,
-                isPlaying = isPlaying,
-                onSongSelected = onSongSelected
-            )
+            count = songs.itemCount,
+            key = songs.itemKey { it.id },
+            contentType = songs.itemContentType { "song" }
+        ) { index ->
+            val song = songs[index]
+            if (song != null) {
+                val isSelected = song.id == currentSong?.id
+                SongListItem(
+                    song = song,
+                    isSelected = isSelected,
+                    isPlaying = isPlaying,
+                    onSongSelected = onSongSelected
+                )
+            }
         }
         item(contentType = "spacer") { Spacer(modifier = Modifier.height(96.dp)) }
     }
@@ -435,9 +443,9 @@ fun SongListItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         SongArtwork(
-            artworkUri = song.artworkUri,
+            song = song,
             contentDescription = "Album art",
-            size = 120,
+            size = 128,
             crossfade = false,
             iconSize = 24.dp,
             modifier = Modifier
@@ -514,9 +522,9 @@ fun MiniPlayer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SongArtwork(
-                    artworkUri = song.artworkUri,
+                    song = song,
                     contentDescription = "Mini player art",
-                    size = 120,
+                    size = 128,
                     crossfade = false,
                     iconSize = 20.dp,
                     modifier = Modifier
@@ -707,6 +715,7 @@ fun PlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val lazySongs = viewModel.songsFlow.collectAsLazyPagingItems()
 
     val playerBrush = remember {
         Brush.verticalGradient(
@@ -789,7 +798,7 @@ fun PlayerScreen(
             }
 
             PlaylistQueue(
-                playlist = state.playlist,
+                songs = lazySongs,
                 currentSong = state.currentSong,
                 isPlaying = state.isPlaying,
                 onSongSelected = remember(viewModel) { { viewModel.playSong(it) } },
@@ -813,8 +822,6 @@ fun PlayerCard(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val artworkUrl = state.currentSong?.artworkUri
-
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -829,9 +836,9 @@ fun PlayerCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             SongArtwork(
-                artworkUri = artworkUrl ?: "",
+                song = state.currentSong,
                 contentDescription = "Album Art",
-                size = 600,
+                size = 256,
                 crossfade = true,
                 iconSize = 80.dp,
                 modifier = Modifier
@@ -1005,7 +1012,7 @@ fun PlaybackControls(
 
 @Composable
 fun PlaylistQueue(
-    playlist: List<Song>,
+    songs: LazyPagingItems<Song>,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongSelected: (Song) -> Unit,
@@ -1017,16 +1024,19 @@ fun PlaylistQueue(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(
-            items = playlist,
-            key = { it.id },
-            contentType = { "queue_song" }
-        ) { song ->
-            QueueListItem(
-                song = song,
-                isSelected = song.id == currentSong?.id,
-                isPlaying = isPlaying,
-                onSongSelected = onSongSelected
-            )
+            count = songs.itemCount,
+            key = songs.itemKey { it.id },
+            contentType = songs.itemContentType { "queue_song" }
+        ) { index ->
+            val song = songs[index]
+            if (song != null) {
+                QueueListItem(
+                    song = song,
+                    isSelected = song.id == currentSong?.id,
+                    isPlaying = isPlaying,
+                    onSongSelected = onSongSelected
+                )
+            }
         }
     }
 }
@@ -1056,9 +1066,9 @@ fun QueueListItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             SongArtwork(
-                artworkUri = song.artworkUri,
+                song = song,
                 contentDescription = "Artwork Thumbnail",
-                size = 120,
+                size = 128,
                 crossfade = false,
                 iconSize = 24.dp,
                 modifier = Modifier

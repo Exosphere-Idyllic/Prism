@@ -10,40 +10,62 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
+import androidx.paging.PagingSource
+
+data class SongSyncInfo(
+    val id: String,
+    val dateModified: Long
+)
+
 @Dao
-interface SongDao {
+abstract class SongDao {
     @Query("SELECT * FROM songs ORDER BY title ASC")
-    suspend fun getAllSongs(): List<Song>
+    abstract suspend fun getAllSongs(): List<Song>
+
+    @Query("SELECT * FROM songs ORDER BY title ASC")
+    abstract fun getAllSongsPaging(): PagingSource<Int, Song>
+
+    @Query("SELECT * FROM songs WHERE title LIKE :query OR artist LIKE :query OR album LIKE :query ORDER BY title ASC")
+    abstract fun searchSongsPaging(query: String): PagingSource<Int, Song>
+
+    @Query("SELECT id, dateModified FROM songs")
+    abstract suspend fun getSongsSyncInfo(): List<SongSyncInfo>
+
+    @Query("DELETE FROM songs WHERE id IN (:ids)")
+    abstract suspend fun deleteSongsByIds(ids: List<String>)
+
+    @Query("SELECT * FROM songs WHERE artworkUri != ''")
+    abstract suspend fun getAllSongsWithArtwork(): List<Song>
 
     @Query("SELECT * FROM songs ORDER BY title ASC LIMIT :limit OFFSET :offset")
-    suspend fun getSongsPaginated(limit: Int, offset: Int): List<Song>
+    abstract suspend fun getSongsPaginated(limit: Int, offset: Int): List<Song>
 
     @Query("SELECT COUNT(*) FROM songs")
-    suspend fun getSongsCount(): Int
+    abstract suspend fun getSongsCount(): Int
 
     @Query("SELECT * FROM songs WHERE title LIKE :query OR artist LIKE :query ORDER BY title ASC LIMIT :limit OFFSET :offset")
-    suspend fun searchSongsPaginated(query: String, limit: Int, offset: Int): List<Song>
+    abstract suspend fun searchSongsPaginated(query: String, limit: Int, offset: Int): List<Song>
 
     @Query("SELECT COUNT(*) FROM songs WHERE title LIKE :query OR artist LIKE :query")
-    suspend fun searchSongsCount(query: String): Int
+    abstract suspend fun searchSongsCount(query: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(songs: List<Song>)
+    abstract suspend fun insertAll(songs: List<Song>)
 
     @Query("DELETE FROM songs")
-    suspend fun deleteAll()
+    abstract suspend fun deleteAll()
 
     @Query("DELETE FROM songs WHERE id NOT IN (:ids)")
-    suspend fun deleteRemovedSongs(ids: List<String>)
+    abstract suspend fun deleteRemovedSongs(ids: List<String>)
 
     @Transaction
-    suspend fun updateSongsTransaction(songs: List<Song>) {
+    open suspend fun updateSongsTransaction(songs: List<Song>) {
         insertAll(songs)
         deleteRemovedSongs(songs.map { it.id })
     }
 }
 
-@Database(entities = [Song::class], version = 2, exportSchema = false)
+@Database(entities = [Song::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
 

@@ -104,11 +104,19 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.room.ktx)
   "kapt"(libs.androidx.room.compiler)
+  "kapt"(libs.kotlin.metadata)
+  "kapt"(libs.sqlite.jdbc)
+  implementation(libs.androidx.room.paging)
+
+  // Paging 3
+  implementation(libs.androidx.paging.runtime)
+  implementation(libs.androidx.paging.compose)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {
-    val tmpDir = layout.buildDirectory.dir("tmp").get().asFile.absolutePath
-    kaptProcessJvmArgs.add("-Djava.io.tmpdir=$tmpDir")
-    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=$tmpDir")
+    val tmpDir = layout.buildDirectory.dir("tmp").get().asFile
+    if (!tmpDir.exists()) tmpDir.mkdirs()
+    kaptProcessJvmArgs.add("-Djava.io.tmpdir=${tmpDir.absolutePath}")
+    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=${tmpDir.absolutePath}")
 }
 

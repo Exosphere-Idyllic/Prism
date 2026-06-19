@@ -10,12 +10,19 @@ import androidx.room.PrimaryKey
 @Serializable
 @Entity(
     tableName = "songs",
-    indices = [Index(value = ["title"])]
+    indices = [
+        Index(value = ["title"]),
+        Index(value = ["artist"]),
+        Index(value = ["album"])
+    ]
 )
 data class Song(
     @PrimaryKey val id: String,
     val title: String,
     val artist: String,
+    val album: String,
     val mediaUri: String,
-    val artworkUri: String
+    val artworkUri: String,
+    val duration: Long,
+    val dateModified: Long
 )
