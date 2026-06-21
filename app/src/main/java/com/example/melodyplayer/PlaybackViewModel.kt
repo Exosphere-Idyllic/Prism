@@ -1,22 +1,12 @@
 package com.example.melodyplayer
 
-import android.Manifest
 import android.app.Application
 import android.content.ComponentName
-import android.content.ContentUris
-import android.content.Context
-import android.content.pm.PackageManager
-import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.provider.MediaStore
 import android.util.Log
-import androidx.core.content.ContextCompat
-import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,34 +15,22 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.paging.Pager
-import androidx.paging.PagingConfig
-import androidx.paging.PagingData
-import androidx.paging.cachedIn
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.example.melodyplayer.data.AppDatabase
 import com.example.melodyplayer.data.Song
 import com.example.melodyplayer.data.ThumbnailRegistry
-import kotlinx.coroutines.flow.map
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.time.Duration.Companion.milliseconds
 
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
@@ -62,7 +40,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private val app = getApplication<Application>()
-
     private val database = AppDatabase.getDatabase(application)
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
@@ -74,376 +51,35 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     private var songIdToIndexMap = emptyMap<String, Int>()
 
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery = _searchQuery.asStateFlow()
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val songsFlow: Flow<PagingData<Song>> = _searchQuery
-        .flatMapLatest { query ->
-            Pager(
-                config = PagingConfig(
-                    pageSize = 30,
-                    enablePlaceholders = false,
-                    prefetchDistance = 10
-                )
-            ) {
-                if (query.isEmpty()) {
-                    database.songDao().getAllSongsPaging()
-                } else {
-                    database.songDao().searchSongsPaging("%$query%")
-                }
-            }.flow
-        }
-        .cachedIn(viewModelScope)
-
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
 
     private var lastControllerSongs: List<Song> = emptyList()
-    private var contentObserver: ContentObserver? = null
     private var playerListener: Player.Listener? = null
-
-    private val contentObserverEvents = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
 
     init {
         initializeController()
-        checkAndLoadSongs()
 
-        // Scan existing thumbnails at startup on a background thread
-        viewModelScope.launch(Dispatchers.IO) {
-            val cacheDir = File(app.cacheDir, "album_art")
-            if (cacheDir.exists()) {
-                val files = cacheDir.listFiles()
-                files?.forEach { file ->
-                    val name = file.name
-                    if (name.endsWith(".webp")) {
-                        val parts = name.removeSuffix(".webp").split("_")
-                        if (parts.size == 2) {
-                            val songId = parts[0]
-                            val size = parts[1]
-                            if (size == "128") {
-                                ThumbnailRegistry.add128(songId)
-                            } else if (size == "256") {
-                                ThumbnailRegistry.add256(songId)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+        // Sync media items from Room database reactively
         viewModelScope.launch {
-            @OptIn(kotlinx.coroutines.FlowPreview::class)
-            contentObserverEvents
-                .debounce(500.milliseconds)
-                .collect {
-                    loadLocalSongs()
-                }
-        }
-    }
-
-    fun checkAndLoadSongs() {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        if (ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED) {
-            registerContentObserver()
-            loadLocalSongs()
-        } else {
-            _allSongs.value = emptyList()
-            _uiState.value = _uiState.value.copy(totalSongsCount = 0)
-        }
-    }
-
-    private fun registerContentObserver() {
-        if (contentObserver != null) return
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                super.onChange(selfChange, uri)
-                viewModelScope.launch {
-                    contentObserverEvents.emit(Unit)
-                }
-            }
-        }
-        try {
-            app.contentResolver.registerContentObserver(
-                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                true,
-                observer
-            )
-            contentObserver = observer
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to register content observer", e)
-        }
-    }
-
-    private var loadSongsJob: Job? = null
-
-    fun loadLocalSongs() {
-        loadSongsJob?.cancel()
-        loadSongsJob = viewModelScope.launch {
-            if (_uiState.value.totalSongsCount == 0) {
-                _uiState.value = _uiState.value.copy(isLoading = true)
-            }
-
-            // 1. Cargar datos cacheados inmediatamente desde Room para una respuesta visual instantánea
-            val cachedSongs = withContext(Dispatchers.IO) {
-                database.songDao().getAllSongs()
-            }
-            _allSongs.value = cachedSongs
-            songIdToIndexMap = cachedSongs.indices.associateBy { cachedSongs[it].id }
-            _uiState.value = _uiState.value.copy(
-                totalSongsCount = cachedSongs.size,
-                isLoading = cachedSongs.isEmpty()
-            )
-            mediaController?.let { updateControllerMediaItems(it, cachedSongs) }
-
-            // 2. Realizar escaneo incremental en segundo plano en Dispatchers.IO
-            val (finalSongs, songsUpserted) = withContext(Dispatchers.IO) {
-                val list = mutableListOf<Song>()
-                val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                val projection = arrayOf(
-                    MediaStore.Audio.Media._ID,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.ALBUM_ID,
-                    MediaStore.Audio.Media.DURATION,
-                    MediaStore.Audio.Media.DATE_MODIFIED
+            database.songDao().getAllSongsFlow().collect { songs ->
+                _allSongs.value = songs
+                songIdToIndexMap = songs.indices.associateBy { songs[it].id }
+                _uiState.value = _uiState.value.copy(
+                    totalSongsCount = songs.size
                 )
-                val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-                val albumArtBaseUri = "content://media/external/audio/albumart".toUri()
-
-                try {
-                    app.contentResolver.query(
-                        uri,
-                        projection,
-                        selection,
-                        null,
-                        "${MediaStore.Audio.Media.TITLE} ASC"
-                    )?.use { cursor ->
-                        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                        val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                        val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                        val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-                        val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
-                        val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-                        val dateModifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
-
-                        while (cursor.moveToNext()) {
-                            val id = cursor.getLong(idColumn)
-                            val title = cursor.getString(titleColumn) ?: "Unknown Title"
-                            val artist = cursor.getString(artistColumn) ?: "Unknown Artist"
-                            val album = cursor.getString(albumColumn) ?: "Unknown Album"
-                            val albumId = cursor.getLong(albumIdColumn)
-                            val duration = cursor.getLong(durationColumn)
-                            val dateModified = cursor.getLong(dateModifiedColumn)
-
-                            val mediaUri = ContentUris.withAppendedId(
-                                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                                id
-                            ).toString()
-
-                            val artworkUri = if (albumId > 0) {
-                                ContentUris.withAppendedId(
-                                    albumArtBaseUri,
-                                    albumId
-                                ).toString()
-                            } else {
-                                ""
-                            }
-
-                            list.add(
-                                Song(
-                                    id = id.toString(),
-                                    title = title,
-                                    artist = artist,
-                                    album = album,
-                                    mediaUri = mediaUri,
-                                    artworkUri = artworkUri,
-                                    duration = duration,
-                                    dateModified = dateModified
-                                )
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to query MediaStore", e)
-                }
-
-                // Sincronización Incremental
-                val roomSongs = database.songDao().getSongsSyncInfo().associateBy { it.id }
-                val mediaStoreSongsMap = list.associateBy { it.id }
-
-                val toUpsert = mutableListOf<Song>()
-                val toDelete = mutableListOf<String>()
-
-                for (song in list) {
-                    val dbSong = roomSongs[song.id]
-                    if (dbSong == null || song.dateModified > dbSong.dateModified) {
-                        toUpsert.add(song)
-                    }
-                }
-
-                for (dbId in roomSongs.keys) {
-                    if (!mediaStoreSongsMap.containsKey(dbId)) {
-                        toDelete.add(dbId)
-                    }
-                }
-
-                if (toUpsert.isNotEmpty()) {
-                    toUpsert.chunked(500).forEach { chunk ->
-                        database.songDao().insertAll(chunk)
-                    }
-                }
-                if (toDelete.isNotEmpty()) {
-                    toDelete.chunked(500).forEach { chunk ->
-                        database.songDao().deleteSongsByIds(chunk)
-                    }
-                    val cacheDir = app.cacheDir
-                    toDelete.forEach { id ->
-                        File(cacheDir, "album_art/${id}_128.webp").delete()
-                        File(cacheDir, "album_art/${id}_256.webp").delete()
-                    }
-                }
-
-                Pair(list, toUpsert)
+                mediaController?.let { updateControllerMediaItems(it, songs) }
             }
-
-            // 3. Actualizar la UI y el reproductor con la lista final escaneada
-            _allSongs.value = finalSongs
-            songIdToIndexMap = finalSongs.indices.associateBy { finalSongs[it].id }
-            _uiState.value = _uiState.value.copy(
-                totalSongsCount = finalSongs.size,
-                isLoading = false
-            )
-            mediaController?.let { updateControllerMediaItems(it, finalSongs) }
-
-            // Generar portadas WebP para las canciones insertadas/modificadas
-            if (songsUpserted.isNotEmpty()) {
-                val app = getApplication<Application>()
-                viewModelScope.launch(Dispatchers.IO) {
-                    songsUpserted.forEach { song ->
-                        generateWebpThumbnails(app, song)
-                    }
-                }
-            }
-
-            // Escaneo pasivo en background para regenerar portadas WebP que falten (ej. si se borró la caché)
-            val app = getApplication<Application>()
-            viewModelScope.launch(Dispatchers.IO) {
-                val allWithArtwork = database.songDao().getAllSongsWithArtwork()
-                allWithArtwork.forEach { song ->
-                    generateWebpThumbnails(app, song)
-                }
-            }
-        }
-    }
-
-    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-        val height = options.outHeight
-        val width = options.outWidth
-        var inSampleSize = 1
-
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight = height / 2
-            val halfWidth = width / 2
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
-    }
-
-    private suspend fun generateWebpThumbnails(context: Context, song: Song) {
-        if (song.artworkUri.isEmpty()) return
-        val cacheDir = File(context.cacheDir, "album_art")
-        if (!cacheDir.exists()) {
-            cacheDir.mkdirs()
-        }
-        val file128 = File(cacheDir, "${song.id}_128.webp")
-        val file256 = File(cacheDir, "${song.id}_256.webp")
-
-        if (file128.exists() && file256.exists()) return
-
-        try {
-            val artUri = song.artworkUri.toUri()
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            context.contentResolver.openInputStream(artUri)?.use { inputStream ->
-                BitmapFactory.decodeStream(inputStream, null, options)
-            }
-
-            val targetSize = 256
-            val sampleSize = calculateInSampleSize(options, targetSize, targetSize)
-            val decodeOptions = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-            }
-
-            context.contentResolver.openInputStream(artUri)?.use { inputStream ->
-                val bitmap = BitmapFactory.decodeStream(inputStream, null, decodeOptions)
-                if (bitmap != null) {
-                    val webpFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        Bitmap.CompressFormat.WEBP_LOSSY
-                    } else {
-                        @Suppress("DEPRECATION")
-                        Bitmap.CompressFormat.WEBP
-                    }
-
-                    // Crop to center square to avoid stretching rectangular album art
-                    val squareBitmap = if (bitmap.width == bitmap.height) {
-                        bitmap
-                    } else {
-                        val minSize = minOf(bitmap.width, bitmap.height)
-                        val x = (bitmap.width - minSize) / 2
-                        val y = (bitmap.height - minSize) / 2
-                        Bitmap.createBitmap(bitmap, x, y, minSize, minSize)
-                    }
-
-                    if (!file128.exists()) {
-                        val bitmap128 = squareBitmap.scale(128, 128, true)
-                        FileOutputStream(file128).use { out ->
-                            bitmap128.compress(webpFormat, 80, out)
-                        }
-                        bitmap128.recycle()
-                    }
-
-                    if (!file256.exists()) {
-                        val bitmap256 = squareBitmap.scale(256, 256, true)
-                        FileOutputStream(file256).use { out ->
-                            bitmap256.compress(webpFormat, 80, out)
-                        }
-                        bitmap256.recycle()
-                    }
-
-                    if (squareBitmap != bitmap) {
-                        squareBitmap.recycle()
-                    }
-                    bitmap.recycle()
-
-                    // Register new thumbnails in-memory
-                    if (file128.exists()) ThumbnailRegistry.add128(song.id)
-                    if (file256.exists()) ThumbnailRegistry.add256(song.id)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to generate WebP thumbnail for song ${song.id}: ${e.message}")
         }
     }
 
     private fun preloadSongArtwork(song: Song) {
         if (song.artworkUri.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
+            val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.albumId)
             val model = if (hasWebp) {
-                val cacheFile = File(app.cacheDir, "album_art/${song.id}_256.webp")
+                val cacheFile = File(app.cacheDir, "album_art/album_${song.albumId}_256.webp")
                 Uri.fromFile(cacheFile).toString()
             } else {
                 song.artworkUri
@@ -476,9 +112,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val sizeSuffix = "256"
-                val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
+                val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.albumId)
                 val bitmap = if (hasWebp) {
-                    val cacheFile = File(app.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
+                    val cacheFile = File(app.cacheDir, "album_art/album_${song.albumId}_$sizeSuffix.webp")
                     BitmapFactory.decodeFile(cacheFile.absolutePath)
                 } else if (song.artworkUri.isNotEmpty()) {
                     app.contentResolver.openInputStream(song.artworkUri.toUri())?.use {
@@ -570,10 +206,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun setSearchQuery(query: String) {
-        _searchQuery.value = query
-    }
-
     private fun initializeController() {
         val sessionToken = SessionToken(
             app,
@@ -622,7 +254,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 )
                 updateDominantColor(currentSong)
 
-                // Precargar la portada de las próximas 3 canciones
                 if (songIndex != -1) {
                     for (i in 1..3) {
                         if (songIndex + i < songs.size) {
@@ -652,9 +283,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         if (controller.isPlaying) startProgressUpdate()
     }
 
-    fun playSong(song: Song) {
+    fun playSong(song: Song, playlistSongs: List<Song> = emptyList()) {
         val controller = mediaController ?: return
-        val index = songIdToIndexMap[song.id] ?: -1
+        val listToUse = playlistSongs.ifEmpty { _allSongs.value }
+        updateControllerMediaItems(controller, listToUse)
+        
+        val currentMapping = listToUse.indices.associateBy { listToUse[it].id }
+        val index = currentMapping[song.id] ?: -1
         if (index != -1) {
             controller.seekTo(index, 0)
             controller.play()
@@ -721,15 +356,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
         controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
-
-        contentObserver?.let { observer ->
-            try {
-                app.contentResolver.unregisterContentObserver(observer)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to unregister content observer", e)
-            }
-            contentObserver = null
-        }
     }
 }
 

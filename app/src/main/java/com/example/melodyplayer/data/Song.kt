@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["title"]),
         Index(value = ["artist"]),
-        Index(value = ["album"])
+        Index(value = ["album"]),
+        Index(value = ["albumId"])
     ]
 )
 data class Song(
@@ -21,8 +22,10 @@ data class Song(
     val title: String,
     val artist: String,
     val album: String,
+    val albumId: Long,
     val mediaUri: String,
     val artworkUri: String,
     val duration: Long,
-    val dateModified: Long
+    val dateModified: Long,
+    val track: Int = 0
 )
