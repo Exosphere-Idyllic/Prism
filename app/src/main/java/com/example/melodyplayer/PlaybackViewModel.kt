@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
@@ -49,6 +48,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private var lastControllerSongs: List<Song> = emptyList()
     private var playerListener: Player.Listener? = null
 
+    private val _currentSongColor = MutableStateFlow<Int?>(null)
+    val currentSongColor = _currentSongColor.asStateFlow()
+
     init {
         initializeController()
         
@@ -59,20 +61,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             songIdToIndexMap = songs.indices.associateBy { songs[it].id }
             mediaController?.let { updateControllerMediaItems(it, songs) }
         }
-    }
-
-    private val dominantColorsCache = ConcurrentHashMap<String, Int>()
-    private val _currentSongColor = MutableStateFlow<Int?>(null)
-    val currentSongColor = _currentSongColor.asStateFlow()
-
-    // Simplified color logic (can be further improved with a dedicated helper)
-    private fun updateDominantColor(song: Song?) {
-        if (song == null) {
-            _currentSongColor.value = null
-            return
-        }
-        // For now, keeping it simple or skipping if not critical for build fix
-        _currentSongColor.value = null 
     }
 
     private fun syncStateFromController(controller: MediaController, songs: List<Song>) {
@@ -86,7 +74,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             currentPosition = controller.currentPosition.coerceAtLeast(0L),
             duration = controller.duration.coerceAtLeast(0L)
         )
-        updateDominantColor(song)
     }
 
     private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
@@ -147,7 +134,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 val song = songs.find { it.id == mediaItem?.mediaId }
                 _uiState.value = _uiState.value.copy(currentSong = song)
                 _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
-                updateDominantColor(song)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {

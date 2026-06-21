@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -334,21 +333,21 @@ fun SongListScreen(
             )
 
             // ── TabRow ──────────────────────────────
-            ScrollableTabRow(
+            SecondaryScrollableTabRow(
                 selectedTabIndex = selectedTab.ordinal,
                 containerColor = Color.Transparent,
                 contentColor = Color.White,
                 edgePadding = 24.dp,
                 divider = {},
-                indicator = { tabPositions ->
+                indicator = {
                     TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal]),
+                        Modifier.tabIndicatorOffset(selectedTab.ordinal),
                         color = Color(0xFF6366F1)
                     )
                 },
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             ) {
-                LibraryTab.values().forEach { tab ->
+                LibraryTab.entries.forEach { tab ->
                     Tab(
                         selected = selectedTab == tab,
                         onClick = { selectedTab = tab },

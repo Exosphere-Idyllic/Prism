@@ -2,7 +2,6 @@ package com.example.melodyplayer.data
 
 import android.app.Application
 import android.content.ContentUris
-import android.content.Context
 import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -17,25 +16,22 @@ import androidx.core.net.toUri
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
-import com.example.melodyplayer.data.AppDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.time.Duration.Companion.milliseconds
-
-import kotlinx.coroutines.flow.first
 
 class MusicRepository(private val app: Application, private val scope: CoroutineScope) {
 
@@ -102,7 +98,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         }
     }
 
-    private suspend fun performScan() {
+    private fun performScan() {
         scanJob?.cancel()
         scanJob = scope.launch(Dispatchers.IO) {
             _isLoading.value = true
