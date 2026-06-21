@@ -77,7 +77,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun getSongsByArtist(name: String) = repository.getSongsByArtist(name)
 
     fun loadLocalSongs() {
-        // Handled by repository observation
+        repository.startObserving()
     }
 
     override fun onCleared() {

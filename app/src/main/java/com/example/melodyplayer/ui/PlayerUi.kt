@@ -126,13 +126,23 @@ fun SongArtwork(
     iconSize: androidx.compose.ui.unit.Dp = 24.dp
 ) {
     val context = LocalContext.current
-    val model = if (song == null || song.artworkUri.isEmpty()) {
+    val sizeSuffix = if (size <= 128) "128" else "256"
+    val model = if (song == null) {
         null
     } else {
-        // En la Biblioteca, cargamos la portada individual
-        // Si quisiéramos usar caché WebP por canción, la clave debería ser song.id
-        // Por ahora cargamos el artworkUri directamente para respetar la individualidad
-        song.artworkUri
+        val hasWebp = if (size <= 128) {
+            ThumbnailRegistry.songThumbnail128Set[song.id] == true
+        } else {
+            ThumbnailRegistry.songThumbnail256Set[song.id] == true
+        }
+        if (hasWebp) {
+            val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
+            Uri.fromFile(cacheFile).toString()
+        } else if (song.artworkUri.isNotEmpty()) {
+            song.artworkUri
+        } else {
+            null
+        }
     }
 
     val imageRequest = remember(model, size, crossfade) {
