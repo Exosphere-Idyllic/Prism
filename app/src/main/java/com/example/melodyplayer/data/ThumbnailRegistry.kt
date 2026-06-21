@@ -14,8 +14,4 @@ object ThumbnailRegistry {
         thumbnail256Set[songId] = true
     }
 
-    fun clear() {
-        thumbnail128Set.clear()
-        thumbnail256Set.clear()
-    }
 }

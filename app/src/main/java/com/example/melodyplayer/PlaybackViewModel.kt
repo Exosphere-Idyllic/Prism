@@ -61,6 +61,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         private const val TAG = "PlaybackViewModel"
     }
 
+    private val app = getApplication<Application>()
+
     private val database = AppDatabase.getDatabase(application)
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
@@ -113,7 +115,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
         // Scan existing thumbnails at startup on a background thread
         viewModelScope.launch(Dispatchers.IO) {
-            val app = getApplication<Application>()
             val cacheDir = File(app.cacheDir, "album_art")
             if (cacheDir.exists()) {
                 val files = cacheDir.listFiles()
@@ -124,12 +125,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         if (parts.size == 2) {
                             val songId = parts[0]
                             val size = parts[1]
-                            withContext(Dispatchers.Main) {
-                                if (size == "128") {
-                                    ThumbnailRegistry.add128(songId)
-                                } else if (size == "256") {
-                                    ThumbnailRegistry.add256(songId)
-                                }
+                            if (size == "128") {
+                                ThumbnailRegistry.add128(songId)
+                            } else if (size == "256") {
+                                ThumbnailRegistry.add256(songId)
                             }
                         }
                     }
@@ -148,7 +147,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun checkAndLoadSongs() {
-        val app = getApplication<Application>()
         val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.READ_MEDIA_AUDIO
         } else {
@@ -159,7 +157,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             loadLocalSongs()
         } else {
             _allSongs.value = emptyList()
-            _uiState.value = _uiState.value.copy(playlist = emptyList(), totalSongsCount = 0)
+            _uiState.value = _uiState.value.copy(totalSongsCount = 0)
         }
     }
 
@@ -174,7 +172,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
         }
         try {
-            getApplication<Application>().contentResolver.registerContentObserver(
+            app.contentResolver.registerContentObserver(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 true,
                 observer
@@ -223,7 +221,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 val albumArtBaseUri = "content://media/external/audio/albumart".toUri()
 
                 try {
-                    getApplication<Application>().contentResolver.query(
+                    app.contentResolver.query(
                         uri,
                         projection,
                         selection,
@@ -308,7 +306,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     toDelete.chunked(500).forEach { chunk ->
                         database.songDao().deleteSongsByIds(chunk)
                     }
-                    val cacheDir = getApplication<Application>().cacheDir
+                    val cacheDir = app.cacheDir
                     toDelete.forEach { id ->
                         File(cacheDir, "album_art/${id}_128.webp").delete()
                         File(cacheDir, "album_art/${id}_256.webp").delete()
@@ -348,6 +346,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val height = options.outHeight
+        val width = options.outWidth
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
     private suspend fun generateWebpThumbnails(context: Context, song: Song) {
         if (song.artworkUri.isEmpty()) return
         val cacheDir = File(context.cacheDir, "album_art")
@@ -361,8 +374,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
         try {
             val artUri = song.artworkUri.toUri()
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
             context.contentResolver.openInputStream(artUri)?.use { inputStream ->
-                val bitmap = BitmapFactory.decodeStream(inputStream)
+                BitmapFactory.decodeStream(inputStream, null, options)
+            }
+
+            val targetSize = 256
+            val sampleSize = calculateInSampleSize(options, targetSize, targetSize)
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+            }
+
+            context.contentResolver.openInputStream(artUri)?.use { inputStream ->
+                val bitmap = BitmapFactory.decodeStream(inputStream, null, decodeOptions)
                 if (bitmap != null) {
                     val webpFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         Bitmap.CompressFormat.WEBP_LOSSY
@@ -403,10 +429,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     bitmap.recycle()
 
                     // Register new thumbnails in-memory
-                    withContext(Dispatchers.Main) {
-                        if (file128.exists()) ThumbnailRegistry.add128(song.id)
-                        if (file256.exists()) ThumbnailRegistry.add256(song.id)
-                    }
+                    if (file128.exists()) ThumbnailRegistry.add128(song.id)
+                    if (file256.exists()) ThumbnailRegistry.add256(song.id)
                 }
             }
         } catch (e: Exception) {
@@ -416,22 +440,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private fun preloadSongArtwork(song: Song) {
         if (song.artworkUri.isEmpty()) return
-        val context = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
             val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
             val model = if (hasWebp) {
-                val cacheFile = File(context.cacheDir, "album_art/${song.id}_256.webp")
+                val cacheFile = File(app.cacheDir, "album_art/${song.id}_256.webp")
                 Uri.fromFile(cacheFile).toString()
             } else {
                 song.artworkUri
             }
-            val request = ImageRequest.Builder(context)
+            val request = ImageRequest.Builder(app)
                 .data(model)
                 .size(256)
                 .memoryCachePolicy(CachePolicy.ENABLED)
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .build()
-            context.imageLoader.enqueue(request)
+            app.imageLoader.enqueue(request)
         }
     }
 
@@ -452,14 +475,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val context = getApplication<Application>()
                 val sizeSuffix = "256"
                 val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
                 val bitmap = if (hasWebp) {
-                    val cacheFile = File(context.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
+                    val cacheFile = File(app.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
                     BitmapFactory.decodeFile(cacheFile.absolutePath)
                 } else if (song.artworkUri.isNotEmpty()) {
-                    context.contentResolver.openInputStream(song.artworkUri.toUri())?.use {
+                    app.contentResolver.openInputStream(song.artworkUri.toUri())?.use {
                         BitmapFactory.decodeStream(it)
                     }
                 } else {
@@ -486,9 +508,39 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun syncStateFromController(controller: MediaController, songs: List<Song> = _allSongs.value) {
+        val currentMediaId = controller.currentMediaItem?.mediaId
+        val currentSong = if (currentMediaId != null) {
+            val index = songIdToIndexMap[currentMediaId]
+            if (index != null && index != -1 && index < songs.size) songs[index] else songs.firstOrNull()
+        } else {
+            songs.firstOrNull()
+        }
+
+        _uiState.value = _uiState.value.copy(
+            currentSong = currentSong,
+            isPlaying = controller.isPlaying
+        )
+        updateDominantColor(currentSong)
+
+        val newPos = controller.currentPosition.coerceAtLeast(0L)
+        val newDur = controller.duration.coerceAtLeast(0L)
+        val currentProgress = _progressState.value
+        if (currentProgress.currentPosition != newPos || currentProgress.duration != newDur) {
+            _progressState.value = ProgressState(
+                currentPosition = newPos,
+                duration = newDur
+            )
+        }
+    }
+
     private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
-        if (lastControllerSongs == songs) {
-            syncUiWithController(controller, songs)
+        val isSameList = lastControllerSongs === songs || (
+            lastControllerSongs.size == songs.size &&
+            lastControllerSongs.indices.all { lastControllerSongs[it].id == songs[it].id && lastControllerSongs[it].dateModified == songs[it].dateModified }
+        )
+        if (isSameList) {
+            syncStateFromController(controller, songs)
             return
         }
         lastControllerSongs = songs
@@ -513,28 +565,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 if (controller.playbackState == Player.STATE_IDLE) {
                     controller.prepare()
                 }
-                syncUiWithController(controller, songs)
+                syncStateFromController(controller, songs)
             }
         }
-    }
-
-    private fun syncUiWithController(controller: MediaController, songs: List<Song>) {
-        val currentMediaId = controller.currentMediaItem?.mediaId
-        val currentSong = if (currentMediaId != null) {
-            val index = songIdToIndexMap[currentMediaId]
-            if (index != null && index != -1 && index < songs.size) songs[index] else songs.firstOrNull()
-        } else {
-            songs.firstOrNull()
-        }
-
-        _uiState.value = _uiState.value.copy(
-            playlist = songs.take(30),
-            currentSong = currentSong
-        )
-        updateDominantColor(currentSong)
-        _progressState.value = _progressState.value.copy(
-            duration = controller.duration.coerceAtLeast(0L)
-        )
     }
 
     fun setSearchQuery(query: String) {
@@ -542,12 +575,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun initializeController() {
-        val context = getApplication<Application>()
         val sessionToken = SessionToken(
-            context,
-            ComponentName(context, PlaybackService::class.java)
+            app,
+            ComponentName(app, PlaybackService::class.java)
         )
-        controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
+        controllerFuture = MediaController.Builder(app, sessionToken).buildAsync()
         controllerFuture?.addListener({
             try {
                 val controller = controllerFuture?.get() ?: return@addListener
@@ -571,7 +603,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             updateControllerMediaItems(controller, songsToUse)
         }
 
-        updateStateFromController(controller)
+        syncStateFromController(controller, songsToUse)
 
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -581,7 +613,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val songs = _allSongs.value
-                val songIndex = songs.indexOfFirst { it.id == mediaItem?.mediaId }
+                val mediaId = mediaItem?.mediaId
+                val songIndex = if (mediaId != null) songIdToIndexMap[mediaId] ?: -1 else -1
                 val song = if (songIndex != -1) songs[songIndex] else null
                 val currentSong = song ?: _uiState.value.currentSong
                 _uiState.value = _uiState.value.copy(
@@ -598,38 +631,25 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
 
-                _progressState.value = _progressState.value.copy(
-                    duration = controller.duration.coerceAtLeast(0L)
-                )
+                val newDur = controller.duration.coerceAtLeast(0L)
+                val currentProgress = _progressState.value
+                if (currentProgress.duration != newDur) {
+                    _progressState.value = currentProgress.copy(duration = newDur)
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _progressState.value = _progressState.value.copy(
-                    duration = controller.duration.coerceAtLeast(0L)
-                )
+                val newDur = controller.duration.coerceAtLeast(0L)
+                val currentProgress = _progressState.value
+                if (currentProgress.duration != newDur) {
+                    _progressState.value = currentProgress.copy(duration = newDur)
+                }
             }
         }
         controller.addListener(listener)
         playerListener = listener
 
         if (controller.isPlaying) startProgressUpdate()
-    }
-
-    private fun updateStateFromController(controller: MediaController) {
-        val currentMediaItem = controller.currentMediaItem
-        val songs = _allSongs.value
-        val song = songs.find { it.id == currentMediaItem?.mediaId }
-        val currentSong = song ?: songs.firstOrNull()
-        _uiState.value = _uiState.value.copy(
-            currentSong = currentSong,
-            isPlaying = controller.isPlaying,
-            playlist = _uiState.value.playlist.ifEmpty { songs.take(30) }
-        )
-        updateDominantColor(currentSong)
-        _progressState.value = ProgressState(
-            currentPosition = controller.currentPosition.coerceAtLeast(0L),
-            duration = controller.duration.coerceAtLeast(0L)
-        )
     }
 
     fun playSong(song: Song) {
@@ -663,7 +683,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
-        _progressState.value = _progressState.value.copy(currentPosition = positionMs)
+        val current = _progressState.value
+        if (current.currentPosition != positionMs) {
+            _progressState.value = current.copy(currentPosition = positionMs)
+        }
     }
 
     private fun startProgressUpdate() {
@@ -671,10 +694,15 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         progressJob = viewModelScope.launch {
             while (true) {
                 mediaController?.let { controller ->
-                    _progressState.value = ProgressState(
-                        currentPosition = controller.currentPosition.coerceAtLeast(0L),
-                        duration = controller.duration.coerceAtLeast(0L)
-                    )
+                    val newPos = controller.currentPosition.coerceAtLeast(0L)
+                    val newDur = controller.duration.coerceAtLeast(0L)
+                    val current = _progressState.value
+                    if (current.currentPosition != newPos || current.duration != newDur) {
+                        _progressState.value = ProgressState(
+                            currentPosition = newPos,
+                            duration = newDur
+                        )
+                    }
                 }
                 delay(250.milliseconds)
             }
@@ -696,7 +724,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
         contentObserver?.let { observer ->
             try {
-                getApplication<Application>().contentResolver.unregisterContentObserver(observer)
+                app.contentResolver.unregisterContentObserver(observer)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to unregister content observer", e)
             }
@@ -708,7 +736,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 data class PlaybackUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
-    val playlist: List<Song> = emptyList(),
     val isLoading: Boolean = false,
     val totalSongsCount: Int = 0
 )

@@ -37,32 +37,8 @@ abstract class SongDao {
     @Query("SELECT * FROM songs WHERE artworkUri != ''")
     abstract suspend fun getAllSongsWithArtwork(): List<Song>
 
-    @Query("SELECT * FROM songs ORDER BY title ASC LIMIT :limit OFFSET :offset")
-    abstract suspend fun getSongsPaginated(limit: Int, offset: Int): List<Song>
-
-    @Query("SELECT COUNT(*) FROM songs")
-    abstract suspend fun getSongsCount(): Int
-
-    @Query("SELECT * FROM songs WHERE title LIKE :query OR artist LIKE :query ORDER BY title ASC LIMIT :limit OFFSET :offset")
-    abstract suspend fun searchSongsPaginated(query: String, limit: Int, offset: Int): List<Song>
-
-    @Query("SELECT COUNT(*) FROM songs WHERE title LIKE :query OR artist LIKE :query")
-    abstract suspend fun searchSongsCount(query: String): Int
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertAll(songs: List<Song>)
-
-    @Query("DELETE FROM songs")
-    abstract suspend fun deleteAll()
-
-    @Query("DELETE FROM songs WHERE id NOT IN (:ids)")
-    abstract suspend fun deleteRemovedSongs(ids: List<String>)
-
-    @Transaction
-    open suspend fun updateSongsTransaction(songs: List<Song>) {
-        insertAll(songs)
-        deleteRemovedSongs(songs.map { it.id })
-    }
 }
 
 @Database(entities = [Song::class], version = 3, exportSchema = false)
