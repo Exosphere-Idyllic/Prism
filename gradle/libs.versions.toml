@@ -21,8 +21,10 @@ room = "2.8.4"
 paging = "3.3.5"
 sqlite-jdbc = "3.49.1.0"
 kotlin-metadata = "2.4.0"
+androidxPalette = "1.0.0"
 
 [libraries]
+androidx-palette-ktx = { module = "androidx.palette:palette-ktx", version.ref = "androidxPalette" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }

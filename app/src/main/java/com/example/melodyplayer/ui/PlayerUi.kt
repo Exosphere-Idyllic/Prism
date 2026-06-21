@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -55,6 +57,7 @@ import com.example.melodyplayer.PlaybackUiState
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
+import com.example.melodyplayer.data.ThumbnailRegistry
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
@@ -99,17 +102,20 @@ fun SongArtwork(
     iconSize: androidx.compose.ui.unit.Dp = 24.dp
 ) {
     val context = LocalContext.current
-    val model = remember(song, size) {
-        if (song == null || song.artworkUri.isEmpty()) {
-            null
+    val model = if (song == null || song.artworkUri.isEmpty()) {
+        null
+    } else {
+        val sizeSuffix = if (size <= 128) "128" else "256"
+        val hasWebp = if (size <= 128) {
+            ThumbnailRegistry.thumbnail128Set.containsKey(song.id)
         } else {
-            val sizeSuffix = if (size <= 128) "128" else "256"
+            ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
+        }
+        if (hasWebp) {
             val cacheFile = File(context.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
-            if (cacheFile.exists()) {
-                Uri.fromFile(cacheFile).toString()
-            } else {
-                song.artworkUri
-            }
+            Uri.fromFile(cacheFile).toString()
+        } else {
+            song.artworkUri
         }
     }
 
@@ -717,10 +723,20 @@ fun PlayerScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val lazySongs = viewModel.songsFlow.collectAsLazyPagingItems()
 
-    val playerBrush = remember {
+    val currentSongColor by viewModel.currentSongColor.collectAsStateWithLifecycle()
+    val defaultColor = Color(0xFF1E1B4B)
+    val dominantColor = currentSongColor?.let { Color(it) } ?: defaultColor
+
+    val animatedColor by animateColorAsState(
+        targetValue = dominantColor,
+        animationSpec = tween(durationMillis = 800, easing = LinearOutSlowInEasing),
+        label = "playerBgColor"
+    )
+
+    val playerBrush = remember(animatedColor) {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xFF1E1B4B),
+                animatedColor.copy(alpha = 0.45f),
                 Color(0xFF0F172A),
                 Color(0xFF020617)
             )
@@ -835,18 +851,24 @@ fun PlayerCard(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            SongArtwork(
-                song = state.currentSong,
-                contentDescription = "Album Art",
-                size = 256,
-                crossfade = true,
-                iconSize = 80.dp,
-                modifier = Modifier
-                    .size(240.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.05f))
-                    .shadow(8.dp, shape = RoundedCornerShape(20.dp))
-            )
+            Crossfade(
+                targetState = state.currentSong,
+                animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+                label = "albumArtCrossfade"
+            ) { currentSong ->
+                SongArtwork(
+                    song = currentSong,
+                    contentDescription = "Album Art",
+                    size = 256,
+                    crossfade = true,
+                    iconSize = 80.dp,
+                    modifier = Modifier
+                        .size(240.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .shadow(8.dp, shape = RoundedCornerShape(20.dp))
+                )
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 

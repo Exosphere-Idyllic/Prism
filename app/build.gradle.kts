@@ -96,6 +96,9 @@ dependencies {
   // Material Icons Extended
   implementation(libs.androidx.compose.material.icons.extended)
 
+  // Palette
+  implementation(libs.androidx.palette.ktx)
+
   // DataStore & Serialization
   implementation(libs.androidx.datastore)
   implementation(libs.kotlinx.serialization.json)

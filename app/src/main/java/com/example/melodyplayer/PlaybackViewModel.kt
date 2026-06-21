@@ -34,6 +34,8 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.example.melodyplayer.data.AppDatabase
 import com.example.melodyplayer.data.Song
+import com.example.melodyplayer.data.ThumbnailRegistry
+import kotlinx.coroutines.flow.map
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
@@ -108,6 +110,32 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     init {
         initializeController()
         checkAndLoadSongs()
+
+        // Scan existing thumbnails at startup on a background thread
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val cacheDir = File(app.cacheDir, "album_art")
+            if (cacheDir.exists()) {
+                val files = cacheDir.listFiles()
+                files?.forEach { file ->
+                    val name = file.name
+                    if (name.endsWith(".webp")) {
+                        val parts = name.removeSuffix(".webp").split("_")
+                        if (parts.size == 2) {
+                            val songId = parts[0]
+                            val size = parts[1]
+                            withContext(Dispatchers.Main) {
+                                if (size == "128") {
+                                    ThumbnailRegistry.add128(songId)
+                                } else if (size == "256") {
+                                    ThumbnailRegistry.add256(songId)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         viewModelScope.launch {
             @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -320,7 +348,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun generateWebpThumbnails(context: Context, song: Song) {
+    private suspend fun generateWebpThumbnails(context: Context, song: Song) {
         if (song.artworkUri.isEmpty()) return
         val cacheDir = File(context.cacheDir, "album_art")
         if (!cacheDir.exists()) {
@@ -343,8 +371,18 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         Bitmap.CompressFormat.WEBP
                     }
 
+                    // Crop to center square to avoid stretching rectangular album art
+                    val squareBitmap = if (bitmap.width == bitmap.height) {
+                        bitmap
+                    } else {
+                        val minSize = minOf(bitmap.width, bitmap.height)
+                        val x = (bitmap.width - minSize) / 2
+                        val y = (bitmap.height - minSize) / 2
+                        Bitmap.createBitmap(bitmap, x, y, minSize, minSize)
+                    }
+
                     if (!file128.exists()) {
-                        val bitmap128 = bitmap.scale(128, 128, true)
+                        val bitmap128 = squareBitmap.scale(128, 128, true)
                         FileOutputStream(file128).use { out ->
                             bitmap128.compress(webpFormat, 80, out)
                         }
@@ -352,14 +390,23 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     }
 
                     if (!file256.exists()) {
-                        val bitmap256 = bitmap.scale(256, 256, true)
+                        val bitmap256 = squareBitmap.scale(256, 256, true)
                         FileOutputStream(file256).use { out ->
                             bitmap256.compress(webpFormat, 80, out)
                         }
                         bitmap256.recycle()
                     }
 
+                    if (squareBitmap != bitmap) {
+                        squareBitmap.recycle()
+                    }
                     bitmap.recycle()
+
+                    // Register new thumbnails in-memory
+                    withContext(Dispatchers.Main) {
+                        if (file128.exists()) ThumbnailRegistry.add128(song.id)
+                        if (file256.exists()) ThumbnailRegistry.add256(song.id)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -371,8 +418,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         if (song.artworkUri.isEmpty()) return
         val context = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
-            val cacheFile = File(context.cacheDir, "album_art/${song.id}_256.webp")
-            val model = if (cacheFile.exists()) Uri.fromFile(cacheFile).toString() else song.artworkUri
+            val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
+            val model = if (hasWebp) {
+                val cacheFile = File(context.cacheDir, "album_art/${song.id}_256.webp")
+                Uri.fromFile(cacheFile).toString()
+            } else {
+                song.artworkUri
+            }
             val request = ImageRequest.Builder(context)
                 .data(model)
                 .size(256)
@@ -380,6 +432,57 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .build()
             context.imageLoader.enqueue(request)
+        }
+    }
+
+    private val dominantColorsCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val _currentSongColor = MutableStateFlow<Int?>(null)
+    val currentSongColor = _currentSongColor.asStateFlow()
+
+    private fun updateDominantColor(song: Song?) {
+        if (song == null) {
+            _currentSongColor.value = null
+            return
+        }
+        val cached = dominantColorsCache[song.id]
+        if (cached != null) {
+            _currentSongColor.value = cached
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val sizeSuffix = "256"
+                val hasWebp = ThumbnailRegistry.thumbnail256Set.containsKey(song.id)
+                val bitmap = if (hasWebp) {
+                    val cacheFile = File(context.cacheDir, "album_art/${song.id}_$sizeSuffix.webp")
+                    BitmapFactory.decodeFile(cacheFile.absolutePath)
+                } else if (song.artworkUri.isNotEmpty()) {
+                    context.contentResolver.openInputStream(song.artworkUri.toUri())?.use {
+                        BitmapFactory.decodeStream(it)
+                    }
+                } else {
+                    null
+                }
+
+                if (bitmap != null) {
+                    val palette = androidx.palette.graphics.Palette.from(bitmap).generate()
+                    val color = palette.getDarkMutedColor(
+                        palette.getDarkVibrantColor(
+                            palette.getDominantColor(0xFF1E1B4B.toInt())
+                        )
+                    )
+                    dominantColorsCache[song.id] = color
+                    _currentSongColor.value = color
+                    bitmap.recycle()
+                } else {
+                    _currentSongColor.value = null
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to extract dominant color for song ${song.id}", e)
+                _currentSongColor.value = null
+            }
         }
     }
 
@@ -428,6 +531,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             playlist = songs.take(30),
             currentSong = currentSong
         )
+        updateDominantColor(currentSong)
         _progressState.value = _progressState.value.copy(
             duration = controller.duration.coerceAtLeast(0L)
         )
@@ -479,14 +583,19 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 val songs = _allSongs.value
                 val songIndex = songs.indexOfFirst { it.id == mediaItem?.mediaId }
                 val song = if (songIndex != -1) songs[songIndex] else null
+                val currentSong = song ?: _uiState.value.currentSong
                 _uiState.value = _uiState.value.copy(
-                    currentSong = song ?: _uiState.value.currentSong
+                    currentSong = currentSong
                 )
+                updateDominantColor(currentSong)
 
-                // Precargar la portada de la siguiente canción
-                if (songIndex != -1 && songIndex + 1 < songs.size) {
-                    val nextSong = songs[songIndex + 1]
-                    preloadSongArtwork(nextSong)
+                // Precargar la portada de las próximas 3 canciones
+                if (songIndex != -1) {
+                    for (i in 1..3) {
+                        if (songIndex + i < songs.size) {
+                            preloadSongArtwork(songs[songIndex + i])
+                        }
+                    }
                 }
 
                 _progressState.value = _progressState.value.copy(
@@ -510,11 +619,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         val currentMediaItem = controller.currentMediaItem
         val songs = _allSongs.value
         val song = songs.find { it.id == currentMediaItem?.mediaId }
+        val currentSong = song ?: songs.firstOrNull()
         _uiState.value = _uiState.value.copy(
-            currentSong = song ?: songs.firstOrNull(),
+            currentSong = currentSong,
             isPlaying = controller.isPlaying,
             playlist = _uiState.value.playlist.ifEmpty { songs.take(30) }
         )
+        updateDominantColor(currentSong)
         _progressState.value = ProgressState(
             currentPosition = controller.currentPosition.coerceAtLeast(0L),
             duration = controller.duration.coerceAtLeast(0L)
