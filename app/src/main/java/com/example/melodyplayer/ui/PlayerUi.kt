@@ -130,18 +130,10 @@ fun SongArtwork(
     val model = if (song == null || song.artworkUri.isEmpty()) {
         null
     } else {
-        val sizeSuffix = if (size <= 128) "128" else "256"
-        val hasWebp = if (size <= 128) {
-            ThumbnailRegistry.thumbnail128Set[song.albumId] == true
-        } else {
-            ThumbnailRegistry.thumbnail256Set[song.albumId] == true
-        }
-        if (hasWebp) {
-            val cacheFile = File(context.cacheDir, "album_art/album_${song.albumId}_$sizeSuffix.webp")
-            Uri.fromFile(cacheFile).toString()
-        } else {
-            song.artworkUri
-        }
+        // En la Biblioteca, cargamos la portada individual
+        // Si quisiéramos usar caché WebP por canción, la clave debería ser song.id
+        // Por ahora cargamos el artworkUri directamente para respetar la individualidad
+        song.artworkUri
     }
 
     val imageRequest = remember(model, size, crossfade) {
@@ -454,7 +446,7 @@ fun SongListScreen(
                             }
                         }
                         LibraryTab.Playlists -> {
-                            val playlists by libraryViewModel.playlistsFlow.collectAsStateWithLifecycle()
+                            val playlists by libraryViewModel.playlistsFlow.collectAsStateWithLifecycle(emptyList())
                             var showCreateDialog by remember { mutableStateOf(false) }
 
                             Column(modifier = Modifier.fillMaxSize()) {
