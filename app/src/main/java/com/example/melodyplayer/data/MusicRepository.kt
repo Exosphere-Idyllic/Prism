@@ -29,7 +29,13 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import android.content.Context
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.ExistingWorkPolicy
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.time.Duration.Companion.milliseconds
@@ -45,6 +51,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     private val albumDao = database.albumDao()
     private val artistDao = database.artistDao()
     private val playlistDao = database.playlistDao()
+    private val thumbnailCacheDao = database.thumbnailCacheDao()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
@@ -60,7 +67,16 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     private var contentObserver: ContentObserver? = null
     private var scanJob: Job? = null
 
+    private val prefs = app.getSharedPreferences("music_repository_prefs", Context.MODE_PRIVATE)
+    private var lastScanTimestamp: Long
+        get() = prefs.getLong("last_scan_timestamp", 0L)
+        set(value) = prefs.edit().putLong("last_scan_timestamp", value).apply()
+
+    /** Limits concurrent WebP encoding to avoid saturating disk I/O. */
+    private val thumbnailSemaphore = Semaphore(2)
+
     init {
+        // Debounced MediaStore observer → scan
         scope.launch {
             @OptIn(kotlinx.coroutines.FlowPreview::class)
             contentObserverEvents
@@ -69,7 +85,16 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                     performScan()
                 }
         }
+
+        // HIGH-priority thumbnail worker (visible items, current song)
+        scope.launch(Dispatchers.IO) {
+            ThumbnailQueue.highFlow().collect { request ->
+                thumbnailSemaphore.withPermit { processThumbnailRequest(request) }
+            }
+        }
     }
+
+    private var hasStarted = false
 
     fun startObserving() {
         if (contentObserver == null) {
@@ -89,7 +114,15 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 Log.e(TAG, "Failed to register content observer", e)
             }
         }
-        // Always trigger initial scan on calling startObserving
+        // Only trigger the initial scan once to avoid redundant scans on repeated calls.
+        if (!hasStarted) {
+            hasStarted = true
+            scope.launch { performScan() }
+        }
+    }
+
+    /** Explicitly requests a new scan. Use when the user grants runtime permissions. */
+    fun triggerScan() {
         scope.launch { performScan() }
     }
 
@@ -104,20 +137,23 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         scanJob?.cancel()
         scanJob = scope.launch(Dispatchers.IO) {
             _isLoading.value = true
-            initThumbnailRegistry()
-            
-            // 1. Get Room State
-            val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
-            
-            // 2. Query MediaStore
-            val mediaStoreSongs = queryMediaStore()
-            val mediaStoreIds = mediaStoreSongs.map { it.id }.toSet()
 
-            // 3. Identify Changes (Incremental)
+            // 1. Load thumbnail index from Room (replaces filesystem scan)
+            loadThumbnailIndexFromDb()
+
+            // 2. Get Room State
+            val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
+
+            // 3. Query MediaStore
+            val scanFilter = if (roomSongsInfo.isEmpty()) 0L else lastScanTimestamp
+            val mediaStoreIds = queryMediaStoreIds()
+            val changedSongs = queryMediaStore(scanFilter)
+
+            // 4. Identify Changes (Incremental)
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
 
-            for (song in mediaStoreSongs) {
+            for (song in changedSongs) {
                 val dbSongInfo = roomSongsInfo[song.id]
                 if (dbSongInfo == null || song.dateModified > dbSongInfo.dateModified) {
                     toUpsert.add(song)
@@ -125,36 +161,74 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             }
 
             for (dbId in roomSongsInfo.keys) {
-                if (!mediaStoreIds.contains(dbId)) {
+                val dbIdLong = dbId.toLongOrNull() ?: -1L
+                if (!mediaStoreIds.contains(dbIdLong)) {
                     toDelete.add(dbId)
                 }
             }
 
-            // 4. Apply Changes to Songs
+            // Get states of modified and deleted songs BEFORE applying updates to Room
+            val toUpsertIds = toUpsert.map { it.id }
+            val oldSongs = if (toUpsertIds.isNotEmpty()) songDao.getSongsByIds(toUpsertIds) else emptyList()
+            val songsToDelete = if (toDelete.isNotEmpty()) songDao.getSongsByIds(toDelete) else emptyList()
+
+            // 5. Apply Changes to Songs
             if (toUpsert.isNotEmpty()) {
                 toUpsert.chunked(200).forEach { chunk -> songDao.insertAll(chunk) }
             }
             if (toDelete.isNotEmpty()) {
-                toDelete.chunked(200).forEach { chunk -> songDao.deleteSongsByIds(chunk) }
+                toDelete.chunked(200).forEach { chunk ->
+                    songDao.deleteSongsByIds(chunk)
+                    thumbnailCacheDao.deleteSongEntries(chunk)
+                }
             }
 
-            // 5. Update Albums and Artists (Re-generate from current Song table for consistency)
+            // 6. Update Albums and Artists
             if (toUpsert.isNotEmpty() || toDelete.isNotEmpty()) {
-                updateAlbumsAndArtists()
+                updateAlbumsAndArtistsIncrementally(toUpsert, oldSongs, songsToDelete)
             }
 
-            // 6. Finalize
+            // Save the new lastScanTimestamp (with 5 seconds safety margin)
+            lastScanTimestamp = (System.currentTimeMillis() / 1000L) - 5
+
+            // 7. Finalize
             val allSongs = songDao.getAllSongs()
-            val finalCount = allSongs.size
-            _totalSongsCount.value = finalCount
+            _totalSongsCount.value = allSongs.size
             _isLoading.value = false
 
-            // 7. Background: Thumbnails
-            generateMissingThumbnails(allSongs)
+            // 8. Trigger WorkManager for background library thumbnail pre-generation
+            try {
+                val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>().build()
+                WorkManager.getInstance(app).enqueueUniqueWork(
+                    "thumbnail_pre_generation",
+                    ExistingWorkPolicy.REPLACE,
+                    workRequest
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to schedule background thumbnail work", e)
+            }
         }
     }
 
-    private fun queryMediaStore(): List<Song> {
+    private fun queryMediaStoreIds(): Set<Long> {
+        val set = mutableSetOf<Long>()
+        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Audio.Media._ID)
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        try {
+            app.contentResolver.query(uri, projection, selection, null, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                while (cursor.moveToNext()) {
+                    set.add(cursor.getLong(idCol))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query MediaStore IDs", e)
+        }
+        return set
+    }
+
+    private fun queryMediaStore(lastScan: Long = 0L): List<Song> {
         val list = mutableListOf<Song>()
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
@@ -167,7 +241,11 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             MediaStore.Audio.Media.DATE_MODIFIED,
             MediaStore.Audio.Media.TRACK
         )
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        val selection = if (lastScan > 0L) {
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DATE_MODIFIED} > $lastScan"
+        } else {
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        }
         val albumArtBaseUri = "content://media/external/audio/albumart".toUri()
 
         try {
@@ -208,6 +286,70 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         return list
     }
 
+    private suspend fun updateAlbumsAndArtistsIncrementally(
+        toUpsert: List<Song>,
+        oldSongs: List<Song>,
+        songsToDelete: List<Song>
+    ) {
+        val totalChanges = toUpsert.size + songsToDelete.size
+        if (totalChanges > 50) {
+            // Rebuild everything if there are many changes (faster in batch)
+            updateAlbumsAndArtists()
+            return
+        }
+
+        // Affected album IDs
+        val affectedAlbumIds = (
+            toUpsert.map { it.albumId } +
+            oldSongs.map { it.albumId } +
+            songsToDelete.map { it.albumId }
+        ).toSet()
+
+        // Affected artist names
+        val affectedArtists = (
+            toUpsert.map { it.artist } +
+            oldSongs.map { it.artist } +
+            songsToDelete.map { it.artist }
+        ).toSet()
+
+        // Update albums
+        for (albumId in affectedAlbumIds) {
+            if (albumId <= 0L) continue
+            val albumSongs = songDao.getSongsByAlbumSync(albumId)
+            if (albumSongs.isEmpty()) {
+                albumDao.deleteById(albumId)
+            } else {
+                val sample = albumSongs.first()
+                val album = Album(
+                    id = albumId,
+                    albumName = sample.album,
+                    artist = sample.artist,
+                    coverPath = sample.artworkUri,
+                    songCount = albumSongs.size
+                )
+                albumDao.insert(album)
+            }
+        }
+
+        // Update artists
+        for (artistName in affectedArtists) {
+            if (artistName.isEmpty()) continue
+            val artistSongs = songDao.getSongsByArtistSync(artistName)
+            if (artistSongs.isEmpty()) {
+                artistDao.deleteById(artistName.hashCode().toLong())
+            } else {
+                val distinctAlbumCount = artistSongs.map { it.albumId }.distinct().size
+                val artist = Artist(
+                    id = artistName.hashCode().toLong(),
+                    name = artistName,
+                    songCount = artistSongs.size,
+                    albumCount = distinctAlbumCount
+                )
+                artistDao.insert(artist)
+            }
+        }
+    }
+
     private suspend fun updateAlbumsAndArtists() {
         val allSongs = songDao.getAllSongs()
         
@@ -225,11 +367,10 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         albumDao.deleteAll()
         albumDao.insertAll(albums)
 
-        // Artists
-        var artistId = 1L
+        // Artists (use stable hash-based IDs)
         val artists = allSongs.groupBy { it.artist }.map { (name, songs) ->
             Artist(
-                id = artistId++,
+                id = name.hashCode().toLong(),
                 name = name,
                 songCount = songs.size,
                 albumCount = songs.map { it.albumId }.distinct().size
@@ -239,158 +380,97 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         artistDao.insertAll(artists)
     }
 
-    private fun initThumbnailRegistry() {
+    /**
+     * Reads the thumbnail index from Room and populates [ThumbnailRegistry].
+     * Replaces the previous filesystem scan of the album_art cache directory.
+     */
+    private suspend fun loadThumbnailIndexFromDb() {
         try {
-            val cacheDir = File(app.cacheDir, "album_art")
-            if (cacheDir.exists() && cacheDir.isDirectory) {
-                val files = cacheDir.listFiles()
-                if (files != null) {
-                    for (file in files) {
-                        val name = file.name
-                        if (name.endsWith(".webp")) {
-                            if (name.startsWith("album_")) {
-                                val parts = name.substring(6, name.length - 5).split("_")
-                                if (parts.size == 2) {
-                                    val albumId = parts[0].toLongOrNull()
-                                    val size = parts[1]
-                                    if (albumId != null) {
-                                        if (size == "128") ThumbnailRegistry.add128(albumId)
-                                        else if (size == "256") ThumbnailRegistry.add256(albumId)
-                                    }
-                                }
-                            } else if (name.startsWith("song_")) {
-                                val parts = name.substring(5, name.length - 5).split("_")
-                                if (parts.size == 2) {
-                                    val songId = parts[0]
-                                    val size = parts[1]
-                                    if (size == "128") ThumbnailRegistry.addSong128(songId)
-                                    else if (size == "256") ThumbnailRegistry.addSong256(songId)
-                                }
-                            }
-                        }
+            val entries = thumbnailCacheDao.getAll()
+            for (entry in entries) {
+                when (entry.type) {
+                    "album" -> {
+                        val albumId = entry.entityId.toLongOrNull() ?: continue
+                        if (entry.size == 128) ThumbnailRegistry.add128(albumId)
+                        else if (entry.size == 256) ThumbnailRegistry.add256(albumId)
+                    }
+                    "song" -> {
+                        if (entry.size == 128) ThumbnailRegistry.addSong128(entry.entityId)
+                        else if (entry.size == 256) ThumbnailRegistry.addSong256(entry.entityId)
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error initializing thumbnail registry", e)
+            Log.e(TAG, "Error loading thumbnail index from DB", e)
         }
     }
 
-    private suspend fun generateMissingThumbnails(songs: List<Song>) {
+
+    /**
+     * Enqueues a single album thumbnail at [ThumbnailQueue.HIGH] priority.
+     * Called from the UI when an album becomes visible on screen.
+     */
+    fun requestThumbnail(albumId: Long, artworkUri: String) {
+        ThumbnailQueue.enqueueAlbum(albumId, artworkUri, ThumbnailQueue.HIGH)
+    }
+
+    /**
+     * Enqueues a single song thumbnail at [ThumbnailQueue.HIGH] priority.
+     * Called from the UI for visible items or the currently-playing song.
+     */
+    fun requestSongThumbnail(song: Song) {
+        ThumbnailQueue.enqueueSong(song, ThumbnailQueue.HIGH)
+    }
+
+    // ─── Thumbnail worker ─────────────────────────────────────────────────────
+
+    private suspend fun processThumbnailRequest(request: ThumbnailRequest) {
         val cacheDir = File(app.cacheDir, "album_art")
         if (!cacheDir.exists()) cacheDir.mkdirs()
 
-        // 1. Generate Album-level Thumbnails
-        val uniqueAlbums = songs.filter { it.albumId > 0 && it.artworkUri.isNotEmpty() }
-            .associateBy { it.albumId }
-
-        uniqueAlbums.forEach { (albumId, song) ->
-            val file128 = File(cacheDir, "album_${albumId}_128.webp")
-            val file256 = File(cacheDir, "album_${albumId}_256.webp")
-            
-            if (!file128.exists() || !file256.exists()) {
-                generateWebpFromUri(song.artworkUri, file128, file256)
+        when (request) {
+            is ThumbnailRequest.Album -> {
+                val albumId = request.albumId
+                val file128 = File(cacheDir, "album_${albumId}_128.webp")
+                val file256 = File(cacheDir, "album_${albumId}_256.webp")
+                if (!file128.exists() || !file256.exists()) {
+                    val sizes = ThumbnailHelper.generateWebpFromUri(app, request.artworkUri, file128, file256, albumId)
+                    if (sizes.contains(128)) {
+                        ThumbnailRegistry.add128(albumId)
+                        val entry = ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
+                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                    }
+                    if (sizes.contains(256)) {
+                        ThumbnailRegistry.add256(albumId)
+                        val entry = ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
+                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                    }
+                } else {
+                    if (file128.exists()) ThumbnailRegistry.add128(albumId)
+                    if (file256.exists()) ThumbnailRegistry.add256(albumId)
+                }
             }
-            
-            if (file128.exists()) ThumbnailRegistry.add128(albumId)
-            if (file256.exists()) ThumbnailRegistry.add256(albumId)
-        }
-
-        // 2. Generate Song-level Thumbnails (for individual song covers)
-        songs.forEach { song ->
-            if (song.mediaUri.isNotEmpty()) {
+            is ThumbnailRequest.SongRequest -> {
+                val song = request.song
                 val file128 = File(cacheDir, "song_${song.id}_128.webp")
                 val file256 = File(cacheDir, "song_${song.id}_256.webp")
-                
                 if (!file128.exists() || !file256.exists()) {
-                    generateSongWebp(song, file128, file256)
-                }
-                
-                if (file128.exists()) ThumbnailRegistry.addSong128(song.id)
-                if (file256.exists()) ThumbnailRegistry.addSong256(song.id)
-            }
-        }
-    }
-
-    private fun generateWebpFromUri(artworkUri: String, file128: File, file256: File) {
-        try {
-            val uri = artworkUri.toUri()
-            app.contentResolver.openInputStream(uri)?.use { input ->
-                val original = BitmapFactory.decodeStream(input) ?: return
-                
-                val square = if (original.width == original.height) original else {
-                    val size = minOf(original.width, original.height)
-                    Bitmap.createBitmap(original, (original.width - size)/2, (original.height - size)/2, size, size)
-                }
-
-                val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
-
-                if (!file128.exists()) {
-                    square.scale(128, 128).compress(format, 80, FileOutputStream(file128))
-                }
-                if (!file256.exists()) {
-                    square.scale(256, 256).compress(format, 80, FileOutputStream(file256))
-                }
-
-                if (square != original) square.recycle()
-                original.recycle()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Thumb gen failed for $artworkUri", e)
-        }
-    }
-
-    private fun generateSongWebp(song: Song, file128: File, file256: File) {
-        try {
-            var bitmap: Bitmap? = null
-            var retriever: MediaMetadataRetriever? = null
-            try {
-                retriever = MediaMetadataRetriever()
-                retriever.setDataSource(app, Uri.parse(song.mediaUri))
-                val artBytes = retriever.embeddedPicture
-                if (artBytes != null) {
-                    bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
-                }
-            } catch (e: Exception) {
-                // Not a fatal issue; many songs do not have custom embedded artwork
-            } finally {
-                try {
-                    retriever?.close()
-                } catch (e: Exception) {}
-            }
-
-            // Fallback to media store album art if no embedded artwork is found in file
-            if (bitmap == null && song.artworkUri.isNotEmpty()) {
-                try {
-                    val uri = Uri.parse(song.artworkUri)
-                    app.contentResolver.openInputStream(uri)?.use { input ->
-                        bitmap = BitmapFactory.decodeStream(input)
+                    val sizes = ThumbnailHelper.generateSongWebp(app, song, file128, file256)
+                    if (sizes.contains(128)) {
+                        ThumbnailRegistry.addSong128(song.id)
+                        val entry = ThumbnailCacheEntry("song_${song.id}_128", song.id, "song", 128)
+                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to load fallback album art for song ${song.id}", e)
+                    if (sizes.contains(256)) {
+                        ThumbnailRegistry.addSong256(song.id)
+                        val entry = ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
+                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                    }
+                } else {
+                    if (file128.exists()) ThumbnailRegistry.addSong128(song.id)
+                    if (file256.exists()) ThumbnailRegistry.addSong256(song.id)
                 }
             }
-
-            val original = bitmap ?: return
-
-            val square = if (original.width == original.height) original else {
-                val size = minOf(original.width, original.height)
-                Bitmap.createBitmap(original, (original.width - size)/2, (original.height - size)/2, size, size)
-            }
-
-            val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
-
-            if (!file128.exists()) {
-                square.scale(128, 128).compress(format, 80, FileOutputStream(file128))
-            }
-            if (!file256.exists()) {
-                square.scale(256, 256).compress(format, 80, FileOutputStream(file256))
-            }
-
-            if (square != original) square.recycle()
-            original.recycle()
-        } catch (e: Exception) {
-            Log.w(TAG, "Webp generation failed for song ${song.id}", e)
         }
     }
 

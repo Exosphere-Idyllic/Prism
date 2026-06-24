@@ -114,6 +114,9 @@ dependencies {
   // Paging 3
   implementation(libs.androidx.paging.runtime)
   implementation(libs.androidx.paging.compose)
+
+  // WorkManager
+  implementation(libs.androidx.work.runtime)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {

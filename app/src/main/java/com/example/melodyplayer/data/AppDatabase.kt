@@ -48,6 +48,15 @@ abstract class SongDao {
 
     @Query("SELECT * FROM songs WHERE artist = :artist ORDER BY title ASC")
     abstract fun getSongsByArtist(artist: String): Flow<List<Song>>
+
+    @Query("SELECT * FROM songs WHERE id IN (:ids)")
+    abstract suspend fun getSongsByIds(ids: List<String>): List<Song>
+
+    @Query("SELECT * FROM songs WHERE albumId = :albumId")
+    abstract suspend fun getSongsByAlbumSync(albumId: Long): List<Song>
+
+    @Query("SELECT * FROM songs WHERE artist = :artist")
+    abstract suspend fun getSongsByArtistSync(artist: String): List<Song>
 }
 
 @Dao
@@ -60,6 +69,12 @@ interface AlbumDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(albums: List<Album>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(album: Album)
+
+    @Query("DELETE FROM albums WHERE id = :id")
+    suspend fun deleteById(id: Long)
 
     @Query("DELETE FROM albums")
     suspend fun deleteAll()
@@ -75,6 +90,12 @@ interface ArtistDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(artists: List<Artist>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(artist: Artist)
+
+    @Query("DELETE FROM artists WHERE id = :id")
+    suspend fun deleteById(id: Long)
 
     @Query("DELETE FROM artists")
     suspend fun deleteAll()
@@ -130,8 +151,8 @@ interface PlaylistDao {
 }
 
 @Database(
-    entities = [Song::class, Album::class, Artist::class, Playlist::class, PlaylistSong::class],
-    version = 4,
+    entities = [Song::class, Album::class, Artist::class, Playlist::class, PlaylistSong::class, ThumbnailCacheEntry::class],
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -139,6 +160,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun albumDao(): AlbumDao
     abstract fun artistDao(): ArtistDao
     abstract fun playlistDao(): PlaylistDao
+    abstract fun thumbnailCacheDao(): ThumbnailCacheDao
 
     companion object {
         @Volatile

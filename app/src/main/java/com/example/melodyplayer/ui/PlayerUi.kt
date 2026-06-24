@@ -418,7 +418,8 @@ fun SongListScreen(
                                     favoriteSongIds = favoriteSongIds,
                                     onSongSelected = onSongSelected,
                                     onFavoriteToggle = onFavoriteToggle,
-                                    onAddToPlaylist = onAddToPlaylist
+                                    onAddToPlaylist = onAddToPlaylist,
+                                    libraryViewModel = libraryViewModel
                                 )
 
                                 songToAddToPlaylist?.let { song ->
@@ -439,6 +440,15 @@ fun SongListScreen(
                             } else if (albums.isEmpty()) {
                                 EmptyLibrary(modifier = Modifier.fillMaxSize())
                             } else {
+                                // Pre-enqueue the first 20 album covers at HIGH priority.
+                                LaunchedEffect(albums.size) {
+                                    val limit = minOf(20, albums.size)
+                                    for (i in 0 until limit) {
+                                        val album = albums[i]
+                                        libraryViewModel.requestThumbnail(album.id, album.coverPath)
+                                    }
+                                }
+
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(2),
                                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
@@ -564,9 +574,21 @@ fun SongList(
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
+    libraryViewModel: LibraryViewModel,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
+
+    // Pre-enqueue the first visible songs at HIGH priority so thumbnails are
+    // ready before the user starts scrolling.
+    LaunchedEffect(songs.itemCount) {
+        if (songs.itemCount > 0) {
+            val limit = minOf(30, songs.itemCount)
+            for (i in 0 until limit) {
+                songs[i]?.let { libraryViewModel.requestSongThumbnail(it) }
+            }
+        }
+    }
 
     LazyColumn(
         state = listState,
@@ -896,7 +918,7 @@ fun AddToPlaylistDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
-                    items(playlists) { playlist ->
+                    items(playlists, key = { it.id }) { playlist ->
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1082,7 +1104,7 @@ fun AlbumDetailScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(songs) { song ->
+                items(songs, key = { it.id }) { song ->
                     SongListItem(
                         song = song,
                         isSelected = false,
@@ -1180,7 +1202,7 @@ fun ArtistDetailScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(songs) { song ->
+                items(songs, key = { it.id }) { song ->
                     SongListItem(
                         song = song,
                         isSelected = false,
@@ -1295,7 +1317,7 @@ fun PlaylistDetailScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(songs) { song ->
+                items(songs, key = { it.id }) { song ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = Color.Transparent)

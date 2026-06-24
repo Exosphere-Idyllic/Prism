@@ -8,11 +8,14 @@ import androidx.paging.cachedIn
 import com.example.melodyplayer.data.MusicRepository
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -24,22 +27,27 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
+    @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
     val songsFlow: Flow<PagingData<Song>> = _searchQuery
+        .debounce(300.milliseconds)
         .flatMapLatest { query ->
             repository.getSongsFlow(query)
         }
         .cachedIn(viewModelScope)
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val albumsFlow = _searchQuery.flatMapLatest { query ->
-        repository.getAlbumsFlow(query)
-    }
+    @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
+    val albumsFlow = _searchQuery
+        .debounce(300.milliseconds)
+        .flatMapLatest { query ->
+            repository.getAlbumsFlow(query)
+        }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val artistsFlow = _searchQuery.flatMapLatest { query ->
-        repository.getArtistsFlow(query)
-    }
+    @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
+    val artistsFlow = _searchQuery
+        .debounce(300.milliseconds)
+        .flatMapLatest { query ->
+            repository.getArtistsFlow(query)
+        }
 
     val playlistsFlow = repository.playlistsFlow
     val favoriteSongIds = repository.getFavoriteSongIds()
@@ -77,7 +85,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun getSongsByArtist(name: String) = repository.getSongsByArtist(name)
 
     fun loadLocalSongs() {
-        repository.startObserving()
+        // The observer is already registered by init; only trigger a new scan.
+        repository.triggerScan()
+    }
+
+    /** Requests HIGH-priority WebP generation for an album visible on screen. */
+    fun requestThumbnail(albumId: Long, artworkUri: String) {
+        repository.requestThumbnail(albumId, artworkUri)
+    }
+
+    /** Requests HIGH-priority WebP generation for a song visible on screen or currently playing. */
+    fun requestSongThumbnail(song: com.example.melodyplayer.data.Song) {
+        repository.requestSongThumbnail(song)
     }
 
     override fun onCleared() {
