@@ -24,6 +24,16 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val isLoading = repository.isLoading
     val totalSongsCount = repository.totalSongsCount
 
+    // ── Thumbnail state (StateFlow — safe for derivedStateOf in composables) ──
+    // These replace the old global ThumbnailRegistry mutableStateMapOf objects.
+    // Each flow holds the set of IDs for which a WebP thumbnail is confirmed on disk.
+    // Using StateFlow means emissions are conflated: rapid bulk-inserts produce a
+    // single recomposition per frame instead of one per thumbnail write.
+    val albumThumbnail128Ids = repository.albumThumbnail128Ids
+    val albumThumbnail256Ids = repository.albumThumbnail256Ids
+    val songThumbnail128Ids  = repository.songThumbnail128Ids
+    val songThumbnail256Ids  = repository.songThumbnail256Ids
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
@@ -85,17 +95,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun getSongsByArtist(name: String) = repository.getSongsByArtist(name)
 
     fun loadLocalSongs() {
-        // The observer is already registered by init; only trigger a new scan.
         repository.triggerScan()
     }
 
-    /** Requests HIGH-priority WebP generation for an album visible on screen. */
     fun requestThumbnail(albumId: Long, artworkUri: String) {
         repository.requestThumbnail(albumId, artworkUri)
     }
 
-    /** Requests HIGH-priority WebP generation for a song visible on screen or currently playing. */
-    fun requestSongThumbnail(song: com.example.melodyplayer.data.Song) {
+    fun requestSongThumbnail(song: Song) {
         repository.requestSongThumbnail(song)
     }
 

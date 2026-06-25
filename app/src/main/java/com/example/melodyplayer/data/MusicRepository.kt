@@ -3,16 +3,11 @@ package com.example.melodyplayer.data
 import android.app.Application
 import android.content.ContentUris
 import android.database.ContentObserver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.media.MediaMetadataRetriever
 import android.util.Log
-import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -28,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -37,7 +33,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.ExistingWorkPolicy
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.time.Duration.Companion.milliseconds
 
 class MusicRepository(private val app: Application, private val scope: CoroutineScope) {
@@ -58,6 +53,30 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
     private val _totalSongsCount = MutableStateFlow(0)
     val totalSongsCount = _totalSongsCount.asStateFlow()
+
+    // ── Thumbnail state (replaces global ThumbnailRegistry) ──────────────────
+    // Each set holds IDs for which a WebP file is confirmed to exist.
+    // StateFlow emissions are conflated, so rapid bulk inserts produce at most
+    // one recomposition per frame rather than one per thumbnail write.
+    private val _albumThumbnail128Ids = MutableStateFlow<Set<Long>>(emptySet())
+    val albumThumbnail128Ids = _albumThumbnail128Ids.asStateFlow()
+
+    private val _albumThumbnail256Ids = MutableStateFlow<Set<Long>>(emptySet())
+    val albumThumbnail256Ids = _albumThumbnail256Ids.asStateFlow()
+
+    private val _songThumbnail128Ids = MutableStateFlow<Set<String>>(emptySet())
+    val songThumbnail128Ids = _songThumbnail128Ids.asStateFlow()
+
+    private val _songThumbnail256Ids = MutableStateFlow<Set<String>>(emptySet())
+    val songThumbnail256Ids = _songThumbnail256Ids.asStateFlow()
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
+    private fun addAlbum128(albumId: Long) = _albumThumbnail128Ids.update { it + albumId }
+    private fun addAlbum256(albumId: Long) = _albumThumbnail256Ids.update { it + albumId }
+    private fun addSong128(songId: String) = _songThumbnail128Ids.update { it + songId }
+    private fun addSong256(songId: String) = _songThumbnail256Ids.update { it + songId }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     private val contentObserverEvents = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,
@@ -114,14 +133,12 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 Log.e(TAG, "Failed to register content observer", e)
             }
         }
-        // Only trigger the initial scan once to avoid redundant scans on repeated calls.
         if (!hasStarted) {
             hasStarted = true
             scope.launch { performScan() }
         }
     }
 
-    /** Explicitly requests a new scan. Use when the user grants runtime permissions. */
     fun triggerScan() {
         scope.launch { performScan() }
     }
@@ -138,10 +155,10 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         scanJob = scope.launch(Dispatchers.IO) {
             _isLoading.value = true
 
-            // 1. Load thumbnail index from Room (replaces filesystem scan)
+            // 1. Load thumbnail index from Room into the new StateFlows
             loadThumbnailIndexFromDb()
 
-            // 2. Get Room State
+            // 2. Get Room state
             val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
 
             // 3. Query MediaStore
@@ -149,7 +166,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             val mediaStoreIds = queryMediaStoreIds()
             val changedSongs = queryMediaStore(scanFilter)
 
-            // 4. Identify Changes (Incremental)
+            // 4. Identify changes (incremental)
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
 
@@ -167,12 +184,11 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 }
             }
 
-            // Get states of modified and deleted songs BEFORE applying updates to Room
             val toUpsertIds = toUpsert.map { it.id }
             val oldSongs = if (toUpsertIds.isNotEmpty()) songDao.getSongsByIds(toUpsertIds) else emptyList()
             val songsToDelete = if (toDelete.isNotEmpty()) songDao.getSongsByIds(toDelete) else emptyList()
 
-            // 5. Apply Changes to Songs
+            // 5. Apply changes
             if (toUpsert.isNotEmpty()) {
                 toUpsert.chunked(200).forEach { chunk -> songDao.insertAll(chunk) }
             }
@@ -181,22 +197,23 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                     songDao.deleteSongsByIds(chunk)
                     thumbnailCacheDao.deleteSongEntries(chunk)
                 }
+                // Remove deleted IDs from in-memory sets
+                _songThumbnail128Ids.update { it - toDelete.toSet() }
+                _songThumbnail256Ids.update { it - toDelete.toSet() }
             }
 
-            // 6. Update Albums and Artists
+            // 6. Update albums and artists
             if (toUpsert.isNotEmpty() || toDelete.isNotEmpty()) {
                 updateAlbumsAndArtistsIncrementally(toUpsert, oldSongs, songsToDelete)
             }
 
-            // Save the new lastScanTimestamp (with 5 seconds safety margin)
             lastScanTimestamp = (System.currentTimeMillis() / 1000L) - 5
 
-            // 7. Finalize
-            val allSongs = songDao.getAllSongs()
-            _totalSongsCount.value = allSongs.size
+            // 7. Finalize — use COUNT query instead of loading all songs
+            _totalSongsCount.value = songDao.getSongCount()
             _isLoading.value = false
 
-            // 8. Trigger WorkManager for background library thumbnail pre-generation
+            // 8. Trigger WorkManager for background thumbnail pre-generation
             try {
                 val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>().build()
                 WorkManager.getInstance(app).enqueueUniqueWork(
@@ -293,26 +310,22 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     ) {
         val totalChanges = toUpsert.size + songsToDelete.size
         if (totalChanges > 50) {
-            // Rebuild everything if there are many changes (faster in batch)
             updateAlbumsAndArtists()
             return
         }
 
-        // Affected album IDs
         val affectedAlbumIds = (
             toUpsert.map { it.albumId } +
             oldSongs.map { it.albumId } +
             songsToDelete.map { it.albumId }
         ).toSet()
 
-        // Affected artist names
         val affectedArtists = (
             toUpsert.map { it.artist } +
             oldSongs.map { it.artist } +
             songsToDelete.map { it.artist }
         ).toSet()
 
-        // Update albums
         for (albumId in affectedAlbumIds) {
             if (albumId <= 0L) continue
             val albumSongs = songDao.getSongsByAlbumSync(albumId)
@@ -320,18 +333,16 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 albumDao.deleteById(albumId)
             } else {
                 val sample = albumSongs.first()
-                val album = Album(
+                albumDao.insert(Album(
                     id = albumId,
                     albumName = sample.album,
                     artist = sample.artist,
                     coverPath = sample.artworkUri,
                     songCount = albumSongs.size
-                )
-                albumDao.insert(album)
+                ))
             }
         }
 
-        // Update artists
         for (artistName in affectedArtists) {
             if (artistName.isEmpty()) continue
             val artistSongs = songDao.getSongsByArtistSync(artistName)
@@ -339,21 +350,19 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 artistDao.deleteById(artistName.hashCode().toLong())
             } else {
                 val distinctAlbumCount = artistSongs.map { it.albumId }.distinct().size
-                val artist = Artist(
+                artistDao.insert(Artist(
                     id = artistName.hashCode().toLong(),
                     name = artistName,
                     songCount = artistSongs.size,
                     albumCount = distinctAlbumCount
-                )
-                artistDao.insert(artist)
+                ))
             }
         }
     }
 
     private suspend fun updateAlbumsAndArtists() {
         val allSongs = songDao.getAllSongs()
-        
-        // Albums
+
         val albums = allSongs.groupBy { it.albumId }.map { (albumId, songs) ->
             val sample = songs.first()
             Album(
@@ -367,7 +376,6 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         albumDao.deleteAll()
         albumDao.insertAll(albums)
 
-        // Artists (use stable hash-based IDs)
         val artists = allSongs.groupBy { it.artist }.map { (name, songs) ->
             Artist(
                 id = name.hashCode().toLong(),
@@ -381,48 +389,47 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     }
 
     /**
-     * Reads the thumbnail index from Room and populates [ThumbnailRegistry].
-     * Replaces the previous filesystem scan of the album_art cache directory.
+     * Reads the thumbnail index from Room and populates the StateFlow sets.
+     * Called once per scan at startup — after this, sets are updated incrementally
+     * by processThumbnailRequest as new thumbnails are generated.
      */
     private suspend fun loadThumbnailIndexFromDb() {
         try {
             val entries = thumbnailCacheDao.getAll()
+            val album128 = mutableSetOf<Long>()
+            val album256 = mutableSetOf<Long>()
+            val song128 = mutableSetOf<String>()
+            val song256 = mutableSetOf<String>()
+
             for (entry in entries) {
                 when (entry.type) {
                     "album" -> {
                         val albumId = entry.entityId.toLongOrNull() ?: continue
-                        if (entry.size == 128) ThumbnailRegistry.add128(albumId)
-                        else if (entry.size == 256) ThumbnailRegistry.add256(albumId)
+                        if (entry.size == 128) album128.add(albumId) else album256.add(albumId)
                     }
                     "song" -> {
-                        if (entry.size == 128) ThumbnailRegistry.addSong128(entry.entityId)
-                        else if (entry.size == 256) ThumbnailRegistry.addSong256(entry.entityId)
+                        if (entry.size == 128) song128.add(entry.entityId) else song256.add(entry.entityId)
                     }
                 }
             }
+
+            // Emit all four sets at once — single StateFlow update per set
+            _albumThumbnail128Ids.value = album128
+            _albumThumbnail256Ids.value = album256
+            _songThumbnail128Ids.value = song128
+            _songThumbnail256Ids.value = song256
         } catch (e: Exception) {
             Log.e(TAG, "Error loading thumbnail index from DB", e)
         }
     }
 
-
-    /**
-     * Enqueues a single album thumbnail at [ThumbnailQueue.HIGH] priority.
-     * Called from the UI when an album becomes visible on screen.
-     */
     fun requestThumbnail(albumId: Long, artworkUri: String) {
         ThumbnailQueue.enqueueAlbum(albumId, artworkUri, ThumbnailQueue.HIGH)
     }
 
-    /**
-     * Enqueues a single song thumbnail at [ThumbnailQueue.HIGH] priority.
-     * Called from the UI for visible items or the currently-playing song.
-     */
     fun requestSongThumbnail(song: Song) {
         ThumbnailQueue.enqueueSong(song, ThumbnailQueue.HIGH)
     }
-
-    // ─── Thumbnail worker ─────────────────────────────────────────────────────
 
     private suspend fun processThumbnailRequest(request: ThumbnailRequest) {
         val cacheDir = File(app.cacheDir, "album_art")
@@ -436,18 +443,24 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 if (!file128.exists() || !file256.exists()) {
                     val sizes = ThumbnailHelper.generateWebpFromUri(app, request.artworkUri, file128, file256, albumId)
                     if (sizes.contains(128)) {
-                        ThumbnailRegistry.add128(albumId)
-                        val entry = ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
-                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                        addAlbum128(albumId)
+                        scope.launch(Dispatchers.IO) {
+                            thumbnailCacheDao.insertAll(listOf(
+                                ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
+                            ))
+                        }
                     }
                     if (sizes.contains(256)) {
-                        ThumbnailRegistry.add256(albumId)
-                        val entry = ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
-                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                        addAlbum256(albumId)
+                        scope.launch(Dispatchers.IO) {
+                            thumbnailCacheDao.insertAll(listOf(
+                                ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
+                            ))
+                        }
                     }
                 } else {
-                    if (file128.exists()) ThumbnailRegistry.add128(albumId)
-                    if (file256.exists()) ThumbnailRegistry.add256(albumId)
+                    if (file128.exists()) addAlbum128(albumId)
+                    if (file256.exists()) addAlbum256(albumId)
                 }
             }
             is ThumbnailRequest.SongRequest -> {
@@ -457,37 +470,49 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 if (!file128.exists() || !file256.exists()) {
                     val sizes = ThumbnailHelper.generateSongWebp(app, song, file128, file256)
                     if (sizes.contains(128)) {
-                        ThumbnailRegistry.addSong128(song.id)
-                        val entry = ThumbnailCacheEntry("song_${song.id}_128", song.id, "song", 128)
-                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                        addSong128(song.id)
+                        scope.launch(Dispatchers.IO) {
+                            thumbnailCacheDao.insertAll(listOf(
+                                ThumbnailCacheEntry("song_${song.id}_128", song.id, "song", 128)
+                            ))
+                        }
                     }
                     if (sizes.contains(256)) {
-                        ThumbnailRegistry.addSong256(song.id)
-                        val entry = ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
-                        scope.launch(Dispatchers.IO) { thumbnailCacheDao.insertAll(listOf(entry)) }
+                        addSong256(song.id)
+                        scope.launch(Dispatchers.IO) {
+                            thumbnailCacheDao.insertAll(listOf(
+                                ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
+                            ))
+                        }
                     }
                 } else {
-                    if (file128.exists()) ThumbnailRegistry.addSong128(song.id)
-                    if (file256.exists()) ThumbnailRegistry.addSong256(song.id)
+                    if (file128.exists()) addSong128(song.id)
+                    if (file256.exists()) addSong256(song.id)
                 }
             }
         }
     }
 
-    // Data Exposure
+    // ── Data exposure ─────────────────────────────────────────────────────────
+
     fun getSongsFlow(query: String): Flow<PagingData<Song>> {
         return Pager(PagingConfig(pageSize = 30, enablePlaceholders = false)) {
             if (query.isEmpty()) songDao.getAllSongsPaging() else songDao.searchSongsPaging("%$query%")
         }.flow
     }
 
-    fun getAlbumsFlow(query: String) = if (query.isEmpty()) albumDao.getAllAlbums() else albumDao.searchAlbums("%$query%")
-    fun getArtistsFlow(query: String) = if (query.isEmpty()) artistDao.getAllArtists() else artistDao.searchArtists("%$query%")
+    fun getAlbumsFlow(query: String) =
+        if (query.isEmpty()) albumDao.getAllAlbums() else albumDao.searchAlbums("%$query%")
+
+    fun getArtistsFlow(query: String) =
+        if (query.isEmpty()) artistDao.getAllArtists() else artistDao.searchArtists("%$query%")
+
     val playlistsFlow = playlistDao.getAllPlaylists()
-    
+
     fun getFavoriteSongIds() = playlistDao.getPlaylistSongIdsFlow("Favoritas").map { it.toSet() }
 
-    // Playlist actions
+    // ── Playlist actions ──────────────────────────────────────────────────────
+
     suspend fun toggleFavorite(song: Song) {
         val favId = getOrCreatePlaylist("Favoritas")
         val isFav = playlistDao.getPlaylistSongIdsFlow("Favoritas").map { it.contains(song.id) }.firstInFlow()
@@ -500,7 +525,12 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     }
 
     private suspend fun getOrCreatePlaylist(name: String): Long {
-        return playlistDao.getPlaylistByName(name)?.id ?: playlistDao.insert(Playlist(name = name, createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()))
+        return playlistDao.getPlaylistByName(name)?.id
+            ?: playlistDao.insert(Playlist(
+                name = name,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            ))
     }
 
     suspend fun createPlaylist(name: String) {
@@ -524,9 +554,6 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     fun getSongsForPlaylist(id: Long) = playlistDao.getSongsForPlaylist(id)
     fun getSongsByAlbum(id: Long) = songDao.getSongsByAlbum(id)
     fun getSongsByArtist(name: String) = songDao.getSongsByArtist(name)
-    
-    // Helper extension
-    private suspend fun <T> Flow<T>.firstInFlow(): T {
-        return this.first()
-    }
+
+    private suspend fun <T> Flow<T>.firstInFlow(): T = this.first()
 }

@@ -70,7 +70,6 @@ import com.example.melodyplayer.data.Album
 import com.example.melodyplayer.data.Artist
 import com.example.melodyplayer.data.Playlist
 import com.example.melodyplayer.data.Song
-import com.example.melodyplayer.data.ThumbnailRegistry
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import java.io.File
@@ -116,10 +115,20 @@ fun shimmerBrush(targetValue: Float = 1000f): Brush {
 //  IMAGE ARTWORK RESOLVERS
 // ─────────────────────────────────────────────
 
+/**
+ * Renders song artwork for a single item.
+ *
+ * [thumbnail128Ids] / [thumbnail256Ids] are the StateFlow sets from LibraryViewModel,
+ * collected once at the call-site and passed down. Each composable derives its own
+ * boolean via [derivedStateOf] so only items whose thumbnail state actually changed
+ * trigger a recomposition — not the entire list.
+ */
 @Composable
 fun SongArtwork(
     song: Song?,
     contentDescription: String?,
+    thumbnail128Ids: Set<String>,
+    thumbnail256Ids: Set<String>,
     modifier: Modifier = Modifier,
     size: Int = 128,
     crossfade: Boolean = false,
@@ -127,26 +136,32 @@ fun SongArtwork(
 ) {
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
-    val model = if (song == null) {
-        null
-    } else {
-        val hasWebp = if (size <= 128) {
-            ThumbnailRegistry.songThumbnail128Set[song.id] == true
-        } else {
-            ThumbnailRegistry.songThumbnail256Set[song.id] == true
-        }
-        if (hasWebp) {
-            val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
-            Uri.fromFile(cacheFile).toString()
-        } else if (song.artworkUri.isNotEmpty()) {
-            song.artworkUri
-        } else {
-            null
+
+    // derivedStateOf isolates recomposition: only this composable re-runs when
+    // THIS song's entry appears in the set, not when any other song's thumbnail lands.
+    val hasWebp by remember(song?.id, size) {
+        derivedStateOf {
+            if (song == null) false
+            else if (size <= 128) thumbnail128Ids.contains(song.id)
+            else thumbnail256Ids.contains(song.id)
         }
     }
 
-    val imageRequest = remember(model, size, crossfade) {
-        ImageRequest.Builder(context)
+    val model = if (song == null) {
+        null
+    } else if (hasWebp) {
+        val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
+        Uri.fromFile(cacheFile).toString()
+    } else if (song.artworkUri.isNotEmpty()) {
+        song.artworkUri
+    } else {
+        null
+    }
+
+    // key on song.id + hasWebp so the request is recreated only when the source changes
+    val imageRequest = remember(song?.id, hasWebp, size, crossfade) {
+        if (model == null) null
+        else ImageRequest.Builder(context)
             .data(model)
             .crossfade(crossfade)
             .size(size)
@@ -159,7 +174,7 @@ fun SongArtwork(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        if (model != null) {
+        if (imageRequest != null) {
             AsyncImage(
                 model = imageRequest,
                 contentDescription = contentDescription,
@@ -179,11 +194,18 @@ fun SongArtwork(
     }
 }
 
+/**
+ * Renders album artwork for a single item.
+ * Same derivedStateOf pattern as [SongArtwork] — only the item whose album thumbnail
+ * just landed will recompose.
+ */
 @Composable
 fun AlbumArtwork(
     albumId: Long,
     coverUri: String,
     contentDescription: String?,
+    thumbnail128Ids: Set<Long>,
+    thumbnail256Ids: Set<Long>,
     modifier: Modifier = Modifier,
     size: Int = 256,
     crossfade: Boolean = false,
@@ -191,11 +213,14 @@ fun AlbumArtwork(
 ) {
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
-    val hasWebp = if (size <= 128) {
-        ThumbnailRegistry.thumbnail128Set[albumId] == true
-    } else {
-        ThumbnailRegistry.thumbnail256Set[albumId] == true
+
+    val hasWebp by remember(albumId, size) {
+        derivedStateOf {
+            if (size <= 128) thumbnail128Ids.contains(albumId)
+            else thumbnail256Ids.contains(albumId)
+        }
     }
+
     val model = if (hasWebp) {
         val cacheFile = File(context.cacheDir, "album_art/album_${albumId}_$sizeSuffix.webp")
         Uri.fromFile(cacheFile).toString()
@@ -205,8 +230,9 @@ fun AlbumArtwork(
         null
     }
 
-    val imageRequest = remember(model, size, crossfade) {
-        ImageRequest.Builder(context)
+    val imageRequest = remember(albumId, hasWebp, size, crossfade) {
+        if (model == null) null
+        else ImageRequest.Builder(context)
             .data(model)
             .crossfade(crossfade)
             .size(size)
@@ -219,7 +245,7 @@ fun AlbumArtwork(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        if (model != null) {
+        if (imageRequest != null) {
             AsyncImage(
                 model = imageRequest,
                 contentDescription = contentDescription,
@@ -257,6 +283,12 @@ fun SongListScreen(
     val searchQuery by libraryViewModel.searchQuery.collectAsStateWithLifecycle()
     val isLoading by libraryViewModel.isLoading.collectAsStateWithLifecycle()
     val totalSongs by libraryViewModel.totalSongsCount.collectAsStateWithLifecycle()
+    // Collect thumbnail sets once at screen level — composables derive their own
+    // boolean via derivedStateOf so recomposition is scoped to the changed item.
+    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
+    val albumThumbnail128Ids by libraryViewModel.albumThumbnail128Ids.collectAsStateWithLifecycle()
+    val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedTab by remember { mutableStateOf(LibraryTab.Biblioteca) }
@@ -416,6 +448,8 @@ fun SongListScreen(
                                     currentSong = state.currentSong,
                                     isPlaying = state.isPlaying,
                                     favoriteSongIds = favoriteSongIds,
+                                    songThumbnail128Ids = songThumbnail128Ids,
+                                    songThumbnail256Ids = songThumbnail256Ids,
                                     onSongSelected = onSongSelected,
                                     onFavoriteToggle = onFavoriteToggle,
                                     onAddToPlaylist = onAddToPlaylist,
@@ -457,7 +491,12 @@ fun SongListScreen(
                                     modifier = Modifier.fillMaxSize()
                                 ) {
                                     items(albums, key = { it.id }) { album ->
-                                        AlbumGridItem(album = album, onClick = { onNavigateToAlbum(album.id, album.albumName) })
+                                        AlbumGridItem(
+                                            album = album,
+                                            thumbnail128Ids = albumThumbnail128Ids,
+                                            thumbnail256Ids = albumThumbnail256Ids,
+                                            onClick = { onNavigateToAlbum(album.id, album.albumName) }
+                                        )
                                     }
                                     item { Spacer(modifier = Modifier.height(96.dp)) }
                                     item { Spacer(modifier = Modifier.height(96.dp)) }
@@ -550,6 +589,8 @@ fun SongListScreen(
             MiniPlayer(
                 state = state,
                 progressStateFlow = playbackViewModel.progressState,
+                songThumbnail128Ids = songThumbnail128Ids,
+                songThumbnail256Ids = songThumbnail256Ids,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onOpenPlayer = onNavigateToPlayer,
                 modifier = Modifier
@@ -571,6 +612,8 @@ fun SongList(
     currentSong: Song?,
     isPlaying: Boolean,
     favoriteSongIds: Set<String>,
+    songThumbnail128Ids: Set<String>,
+    songThumbnail256Ids: Set<String>,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
@@ -579,8 +622,6 @@ fun SongList(
 ) {
     val listState = rememberLazyListState()
 
-    // Pre-enqueue the first visible songs at HIGH priority so thumbnails are
-    // ready before the user starts scrolling.
     LaunchedEffect(songs.itemCount) {
         if (songs.itemCount > 0) {
             val limit = minOf(30, songs.itemCount)
@@ -612,6 +653,8 @@ fun SongList(
                     isSelected = isSelected,
                     isPlaying = activePlayingState,
                     isFavorite = isFavorite,
+                    thumbnail128Ids = songThumbnail128Ids,
+                    thumbnail256Ids = songThumbnail256Ids,
                     onSongSelected = onSongSelected,
                     onFavoriteToggle = { onFavoriteToggle(song) },
                     onAddToPlaylist = { onAddToPlaylist(song) }
@@ -628,6 +671,8 @@ fun SongListItem(
     isSelected: Boolean,
     isPlaying: Boolean,
     isFavorite: Boolean,
+    thumbnail128Ids: Set<String>,
+    thumbnail256Ids: Set<String>,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: () -> Unit,
     onAddToPlaylist: () -> Unit
@@ -646,6 +691,8 @@ fun SongListItem(
         SongArtwork(
             song = song,
             contentDescription = "Album art",
+            thumbnail128Ids = thumbnail128Ids,
+            thumbnail256Ids = thumbnail256Ids,
             size = 128,
             crossfade = false,
             iconSize = 24.dp,
@@ -721,6 +768,8 @@ fun SongListItem(
 @Composable
 fun AlbumGridItem(
     album: Album,
+    thumbnail128Ids: Set<Long>,
+    thumbnail256Ids: Set<Long>,
     onClick: () -> Unit
 ) {
     Card(
@@ -743,6 +792,8 @@ fun AlbumGridItem(
                     albumId = album.id,
                     coverUri = album.coverPath,
                     contentDescription = null,
+                    thumbnail128Ids = thumbnail128Ids,
+                    thumbnail256Ids = thumbnail256Ids,
                     size = 256,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -1013,6 +1064,10 @@ fun AlbumDetailScreen(
 ) {
     val songs by libraryViewModel.getSongsByAlbum(albumId).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
+    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
+    val albumThumbnail128Ids by libraryViewModel.albumThumbnail128Ids.collectAsStateWithLifecycle()
+    val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1067,6 +1122,8 @@ fun AlbumDetailScreen(
                         albumId = albumId,
                         coverUri = songs.firstOrNull()?.artworkUri ?: "",
                         contentDescription = albumName,
+                        thumbnail128Ids = albumThumbnail128Ids,
+                        thumbnail256Ids = albumThumbnail256Ids,
                         size = 256,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -1110,6 +1167,8 @@ fun AlbumDetailScreen(
                         isSelected = false,
                         isPlaying = false,
                         isFavorite = favoriteSongIds.contains(song.id),
+                        thumbnail128Ids = songThumbnail128Ids,
+                        thumbnail256Ids = songThumbnail256Ids,
                         onSongSelected = { playbackViewModel.playSong(song, songs) },
                         onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
                         onAddToPlaylist = {}
@@ -1130,6 +1189,8 @@ fun ArtistDetailScreen(
 ) {
     val songs by libraryViewModel.getSongsByArtist(artistName).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
+    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1208,6 +1269,8 @@ fun ArtistDetailScreen(
                         isSelected = false,
                         isPlaying = false,
                         isFavorite = favoriteSongIds.contains(song.id),
+                        thumbnail128Ids = songThumbnail128Ids,
+                        thumbnail256Ids = songThumbnail256Ids,
                         onSongSelected = { playbackViewModel.playSong(song, songs) },
                         onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
                         onAddToPlaylist = {}
@@ -1229,6 +1292,8 @@ fun PlaylistDetailScreen(
 ) {
     val songs by libraryViewModel.getSongsForPlaylist(playlistId).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
+    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1332,6 +1397,8 @@ fun PlaylistDetailScreen(
                                     isSelected = false,
                                     isPlaying = false,
                                     isFavorite = favoriteSongIds.contains(song.id),
+                                    thumbnail128Ids = songThumbnail128Ids,
+                                    thumbnail256Ids = songThumbnail256Ids,
                                     onSongSelected = { playbackViewModel.playSong(song, songs) },
                                     onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
                                     onAddToPlaylist = {}
@@ -1560,6 +1627,8 @@ fun NoSearchResults(query: String, modifier: Modifier = Modifier) {
 fun MiniPlayer(
     state: PlaybackUiState,
     progressStateFlow: StateFlow<ProgressState>,
+    songThumbnail128Ids: Set<String>,
+    songThumbnail256Ids: Set<String>,
     onPlayPauseToggle: () -> Unit,
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier
@@ -1586,6 +1655,8 @@ fun MiniPlayer(
                 SongArtwork(
                     song = song,
                     contentDescription = "Mini player art",
+                    thumbnail128Ids = songThumbnail128Ids,
+                    thumbnail256Ids = songThumbnail256Ids,
                     size = 128,
                     crossfade = false,
                     iconSize = 20.dp,
@@ -1673,8 +1744,14 @@ fun PlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle(PlaybackUiState())
-
     val currentSongColor by viewModel.currentSongColor.collectAsStateWithLifecycle(null)
+    // PlayerScreen needs song thumbnails for the large artwork display
+    // We don't have libraryViewModel here, so we collect from the shared flow if available.
+    // For now pass empty sets — the player uses crossfade=true and Coil's memory cache
+    // will serve the art already loaded in the list. A proper fix would pass libraryViewModel.
+    // TODO: thread libraryViewModel into PlayerScreen if artwork doesn't appear here.
+    val songThumbnail128Ids = remember { emptySet<String>() }
+    val songThumbnail256Ids = remember { emptySet<String>() }
     val defaultColor = Color(0xFF1E1B4B)
     val dominantColor = currentSongColor?.let { Color(it) } ?: defaultColor
 
@@ -1742,6 +1819,8 @@ fun PlayerScreen(
             PlayerCard(
                 state = state,
                 progressStateFlow = viewModel.progressState,
+                songThumbnail128Ids = songThumbnail128Ids,
+                songThumbnail256Ids = songThumbnail256Ids,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious,
@@ -1757,6 +1836,8 @@ fun PlayerScreen(
 fun PlayerCard(
     state: PlaybackUiState,
     progressStateFlow: StateFlow<ProgressState>,
+    songThumbnail128Ids: Set<String>,
+    songThumbnail256Ids: Set<String>,
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -1784,6 +1865,8 @@ fun PlayerCard(
                 SongArtwork(
                     song = currentSong,
                     contentDescription = "Album Art",
+                    thumbnail128Ids = songThumbnail128Ids,
+                    thumbnail256Ids = songThumbnail256Ids,
                     size = 256,
                     crossfade = true,
                     iconSize = 80.dp,

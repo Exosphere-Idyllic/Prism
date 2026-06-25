@@ -57,6 +57,9 @@ abstract class SongDao {
 
     @Query("SELECT * FROM songs WHERE artist = :artist")
     abstract suspend fun getSongsByArtistSync(artist: String): List<Song>
+
+    @Query("SELECT COUNT(*) FROM songs")
+    abstract suspend fun getSongCount(): Int
 }
 
 @Dao

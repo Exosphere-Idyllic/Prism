@@ -1,27 +1,15 @@
 package com.example.melodyplayer.data
 
-import androidx.compose.runtime.mutableStateMapOf
-
-object ThumbnailRegistry {
-    val thumbnail128Set = mutableStateMapOf<Long, Boolean>()
-    val thumbnail256Set = mutableStateMapOf<Long, Boolean>()
-
-    val songThumbnail128Set = mutableStateMapOf<String, Boolean>()
-    val songThumbnail256Set = mutableStateMapOf<String, Boolean>()
-
-    fun add128(albumId: Long) {
-        thumbnail128Set[albumId] = true
-    }
-
-    fun add256(albumId: Long) {
-        thumbnail256Set[albumId] = true
-    }
-
-    fun addSong128(songId: String) {
-        songThumbnail128Set[songId] = true
-    }
-
-    fun addSong256(songId: String) {
-        songThumbnail256Set[songId] = true
-    }
-}
+/**
+ * ThumbnailRegistry has been removed.
+ *
+ * Previously it used global mutableStateMapOf<Long, Boolean> / mutableStateMapOf<String, Boolean>
+ * objects that caused full-list recompositions on every thumbnail write.
+ *
+ * Thumbnail state is now exposed as StateFlow<Set<Long>> / StateFlow<Set<String>> from
+ * LibraryViewModel, and consumed in composables via derivedStateOf so only the individual
+ * item that gained a thumbnail recomposes.
+ *
+ * See: LibraryViewModel.albumThumbnail128Ids / albumThumbnail256Ids /
+ *      songThumbnail128Ids / songThumbnail256Ids
+ */
