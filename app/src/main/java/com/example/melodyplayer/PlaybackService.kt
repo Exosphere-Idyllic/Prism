@@ -41,7 +41,14 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         mediaSession?.run {
-            player.release()
+            val p = player
+            p.applicationLooper.let { looper ->
+                if (looper.thread == Thread.currentThread()) {
+                    p.release()
+                } else {
+                    android.os.Handler(looper).post { p.release() }
+                }
+            }
             release()
             mediaSession = null
         }

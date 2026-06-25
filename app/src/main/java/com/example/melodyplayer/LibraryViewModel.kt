@@ -60,6 +60,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
 
     val playlistsFlow = repository.playlistsFlow
+    val playlistsWithCountsFlow = repository.playlistsWithCountsFlow
     val favoriteSongIds = repository.getFavoriteSongIds()
 
     init {

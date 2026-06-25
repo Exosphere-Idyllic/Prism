@@ -19,7 +19,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -38,6 +42,16 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private val _progressState = MutableStateFlow(ProgressState())
     val progressState = _progressState.asStateFlow()
+
+    val currentSong = _uiState
+        .map { it.currentSong }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val isPlayingState = _uiState
+        .map { it.isPlaying }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     private var songIdToIndexMap = emptyMap<String, Int>()

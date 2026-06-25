@@ -89,23 +89,9 @@ object ThumbnailHelper {
         val successSizes = mutableListOf<Int>()
         try {
             var bitmap: Bitmap? = null
-            var retriever: MediaMetadataRetriever? = null
-            try {
-                retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, Uri.parse(song.mediaUri))
-                val artBytes = retriever.embeddedPicture
-                if (artBytes != null) {
-                    bitmap = decodeSampledBitmapFromBytes(artBytes, 512, 512)
-                }
-            } catch (e: Exception) {
-                // Not a fatal issue
-            } finally {
-                try {
-                    retriever?.close()
-                } catch (e: Exception) {}
-            }
 
-            if (bitmap == null && song.artworkUri.isNotEmpty()) {
+            // Try loading from artworkUri first since it's faster and uses standard content resolver
+            if (song.artworkUri.isNotEmpty()) {
                 try {
                     val uri = Uri.parse(song.artworkUri)
                     context.contentResolver.openInputStream(uri)?.use { input ->
@@ -113,7 +99,26 @@ object ThumbnailHelper {
                         bitmap = decodeSampledBitmapFromBytes(bytes, 512, 512)
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to load fallback album art for song ${song.id}", e)
+                    Log.w(TAG, "Failed to load album art from artworkUri for song ${song.id}", e)
+                }
+            }
+
+            // Fallback to MediaMetadataRetriever if artworkUri is empty or failed to load
+            if (bitmap == null && song.mediaUri.isNotEmpty()) {
+                var retriever: MediaMetadataRetriever? = null
+                try {
+                    retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(context, Uri.parse(song.mediaUri))
+                    val artBytes = retriever.embeddedPicture
+                    if (artBytes != null) {
+                        bitmap = decodeSampledBitmapFromBytes(artBytes, 512, 512)
+                    }
+                } catch (e: Exception) {
+                    // Not a fatal issue
+                } finally {
+                    try {
+                        retriever?.close()
+                    } catch (e: Exception) {}
                 }
             }
 

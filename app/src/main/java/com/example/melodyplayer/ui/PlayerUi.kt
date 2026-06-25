@@ -63,18 +63,20 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.example.melodyplayer.LibraryViewModel
-import com.example.melodyplayer.PlaybackUiState
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Album
 import com.example.melodyplayer.data.Artist
 import com.example.melodyplayer.data.Playlist
+import com.example.melodyplayer.data.PlaylistWithCount
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.debounce
+import kotlin.time.Duration.Companion.milliseconds
 import java.io.File
 
 private val DarkGrayPainter = ColorPainter(Color(0xFF1E1E2C))
+private val NoOpSongAction: (Song) -> Unit = { _ -> }
 
 enum class LibraryTab(val title: String) {
     Biblioteca("Biblioteca"),
@@ -127,8 +129,7 @@ fun shimmerBrush(targetValue: Float = 1000f): Brush {
 fun SongArtwork(
     song: Song?,
     contentDescription: String?,
-    thumbnail128Ids: Set<String>,
-    thumbnail256Ids: Set<String>,
+    hasWebp: Boolean,
     modifier: Modifier = Modifier,
     size: Int = 128,
     crossfade: Boolean = false,
@@ -136,16 +137,6 @@ fun SongArtwork(
 ) {
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
-
-    // derivedStateOf isolates recomposition: only this composable re-runs when
-    // THIS song's entry appears in the set, not when any other song's thumbnail lands.
-    val hasWebp by remember(song?.id, size) {
-        derivedStateOf {
-            if (song == null) false
-            else if (size <= 128) thumbnail128Ids.contains(song.id)
-            else thumbnail256Ids.contains(song.id)
-        }
-    }
 
     val model = if (song == null) {
         null
@@ -204,8 +195,7 @@ fun AlbumArtwork(
     albumId: Long,
     coverUri: String,
     contentDescription: String?,
-    thumbnail128Ids: Set<Long>,
-    thumbnail256Ids: Set<Long>,
+    hasWebp: Boolean,
     modifier: Modifier = Modifier,
     size: Int = 256,
     crossfade: Boolean = false,
@@ -213,13 +203,6 @@ fun AlbumArtwork(
 ) {
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
-
-    val hasWebp by remember(albumId, size) {
-        derivedStateOf {
-            if (size <= 128) thumbnail128Ids.contains(albumId)
-            else thumbnail256Ids.contains(albumId)
-        }
-    }
 
     val model = if (hasWebp) {
         val cacheFile = File(context.cacheDir, "album_art/album_${albumId}_$sizeSuffix.webp")
@@ -279,15 +262,14 @@ fun SongListScreen(
     onNavigateToPlaylist: (Long, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val state by playbackViewModel.uiState.collectAsStateWithLifecycle(PlaybackUiState())
+    val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
+    val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
     val searchQuery by libraryViewModel.searchQuery.collectAsStateWithLifecycle()
     val isLoading by libraryViewModel.isLoading.collectAsStateWithLifecycle()
     val totalSongs by libraryViewModel.totalSongsCount.collectAsStateWithLifecycle()
     // Collect thumbnail sets once at screen level — composables derive their own
     // boolean via derivedStateOf so recomposition is scoped to the changed item.
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
-    val albumThumbnail128Ids by libraryViewModel.albumThumbnail128Ids.collectAsStateWithLifecycle()
     val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -445,11 +427,10 @@ fun SongListScreen(
 
                                 SongList(
                                     songs = lazySongs,
-                                    currentSong = state.currentSong,
-                                    isPlaying = state.isPlaying,
+                                    currentSong = currentSong,
+                                    isPlaying = isPlaying,
                                     favoriteSongIds = favoriteSongIds,
                                     songThumbnail128Ids = songThumbnail128Ids,
-                                    songThumbnail256Ids = songThumbnail256Ids,
                                     onSongSelected = onSongSelected,
                                     onFavoriteToggle = onFavoriteToggle,
                                     onAddToPlaylist = onAddToPlaylist,
@@ -493,8 +474,7 @@ fun SongListScreen(
                                     items(albums, key = { it.id }) { album ->
                                         AlbumGridItem(
                                             album = album,
-                                            thumbnail128Ids = albumThumbnail128Ids,
-                                            thumbnail256Ids = albumThumbnail256Ids,
+                                            hasWebp = albumThumbnail256Ids.contains(album.id),
                                             onClick = { onNavigateToAlbum(album.id, album.albumName) }
                                         )
                                     }
@@ -504,7 +484,7 @@ fun SongListScreen(
                             }
                         }
                         LibraryTab.Playlists -> {
-                            val playlists by libraryViewModel.playlistsFlow.collectAsStateWithLifecycle(emptyList())
+                            val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(emptyList())
                             var showCreateDialog by remember { mutableStateOf(false) }
 
                             Column(modifier = Modifier.fillMaxSize()) {
@@ -534,13 +514,8 @@ fun SongListScreen(
                                         modifier = Modifier.weight(1f).fillMaxWidth()
                                     ) {
                                         items(playlists, key = { it.id }) { playlist ->
-                                            val songCountFlow = remember(playlist.id) {
-                                                libraryViewModel.getSongsForPlaylist(playlist.id).map { it.size }
-                                            }
-                                            val songCount by songCountFlow.collectAsStateWithLifecycle(initialValue = 0)
                                             PlaylistListItem(
                                                 playlist = playlist,
-                                                songCount = songCount,
                                                 onClick = { onNavigateToPlaylist(playlist.id, playlist.name) },
                                                 onDelete = { libraryViewModel.deletePlaylist(playlist.id) }
                                             )
@@ -584,13 +559,15 @@ fun SongListScreen(
         }
 
         // ── Mini Player (bottom) ─────────────────
-        if (state.currentSong != null) {
+        val miniPlayerSong = currentSong
+        if (miniPlayerSong != null) {
             val onPlayPauseToggle = remember(playbackViewModel) { { playbackViewModel.togglePlayPause() } }
+            val hasWebp = songThumbnail128Ids.contains(miniPlayerSong.id)
             MiniPlayer(
-                state = state,
+                song = miniPlayerSong,
+                isPlaying = isPlaying,
                 progressStateFlow = playbackViewModel.progressState,
-                songThumbnail128Ids = songThumbnail128Ids,
-                songThumbnail256Ids = songThumbnail256Ids,
+                hasWebp = hasWebp,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onOpenPlayer = onNavigateToPlayer,
                 modifier = Modifier
@@ -606,6 +583,10 @@ fun SongListScreen(
 //  SONG LIST COMPOSABLES & OPTIMIZATIONS
 // ─────────────────────────────────────────────
 
+// Extra items beyond the visible range to prefetch thumbnails for, so art is
+// usually ready by the time the user scrolls to it.
+private const val THUMBNAIL_PREFETCH_BUFFER = 5
+
 @Composable
 fun SongList(
     songs: LazyPagingItems<Song>,
@@ -613,7 +594,6 @@ fun SongList(
     isPlaying: Boolean,
     favoriteSongIds: Set<String>,
     songThumbnail128Ids: Set<String>,
-    songThumbnail256Ids: Set<String>,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
@@ -622,13 +602,44 @@ fun SongList(
 ) {
     val listState = rememberLazyListState()
 
-    LaunchedEffect(songs.itemCount) {
-        if (songs.itemCount > 0) {
-            val limit = minOf(30, songs.itemCount)
-            for (i in 0 until limit) {
-                songs[i]?.let { libraryViewModel.requestSongThumbnail(it) }
-            }
+    // The effect below only restarts when itemCount changes, but
+    // songThumbnail128Ids updates independently (new thumbnails landing) —
+    // rememberUpdatedState keeps the closure reading the latest set instead
+    // of the one captured when the effect last (re)started.
+    val latestThumbnail128Ids by rememberUpdatedState(songThumbnail128Ids)
+
+    // Tracks song IDs already sent to the thumbnail queue this session, so a
+    // song that's still being generated in the background isn't re-enqueued
+    // on every scroll tick while it scrolls past again.
+    val requestedThumbnailIds = remember { mutableSetOf<String>() }
+
+    // Request thumbnails only for what's actually visible (+ a small buffer
+    // for the items about to scroll into view), not the first 30 items
+    // regardless of scroll position. Debounced so a fast fling doesn't spam
+    // the queue with items that are already gone by the time they'd render.
+    LaunchedEffect(listState, songs.itemCount) {
+        snapshotFlow {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) null
+            else visible.first().index to visible.last().index
         }
+            .debounce(120.milliseconds)
+            .collect { range ->
+                if (range == null || songs.itemCount == 0) return@collect
+                val firstIndex = (range.first - THUMBNAIL_PREFETCH_BUFFER).coerceAtLeast(0)
+                val lastIndex = (range.second + THUMBNAIL_PREFETCH_BUFFER).coerceAtMost(songs.itemCount - 1)
+
+                for (i in firstIndex..lastIndex) {
+                    // peek() reads the current paging snapshot without registering
+                    // a load signal — only the LazyColumn's own items{} block should
+                    // drive actual paging loads.
+                    val song = songs.peek(i) ?: continue
+                    if (song.id in requestedThumbnailIds) continue
+                    if (latestThumbnail128Ids.contains(song.id)) continue
+                    requestedThumbnailIds.add(song.id)
+                    libraryViewModel.requestSongThumbnail(song)
+                }
+            }
     }
 
     LazyColumn(
@@ -653,11 +664,10 @@ fun SongList(
                     isSelected = isSelected,
                     isPlaying = activePlayingState,
                     isFavorite = isFavorite,
-                    thumbnail128Ids = songThumbnail128Ids,
-                    thumbnail256Ids = songThumbnail256Ids,
+                    hasWebp = songThumbnail128Ids.contains(song.id),
                     onSongSelected = onSongSelected,
-                    onFavoriteToggle = { onFavoriteToggle(song) },
-                    onAddToPlaylist = { onAddToPlaylist(song) }
+                    onFavoriteToggle = onFavoriteToggle,
+                    onAddToPlaylist = onAddToPlaylist
                 )
             }
         }
@@ -671,11 +681,10 @@ fun SongListItem(
     isSelected: Boolean,
     isPlaying: Boolean,
     isFavorite: Boolean,
-    thumbnail128Ids: Set<String>,
-    thumbnail256Ids: Set<String>,
+    hasWebp: Boolean,
     onSongSelected: (Song) -> Unit,
-    onFavoriteToggle: () -> Unit,
-    onAddToPlaylist: () -> Unit
+    onFavoriteToggle: (Song) -> Unit,
+    onAddToPlaylist: (Song) -> Unit
 ) {
     val bgColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f) else Color.Transparent
 
@@ -691,8 +700,7 @@ fun SongListItem(
         SongArtwork(
             song = song,
             contentDescription = "Album art",
-            thumbnail128Ids = thumbnail128Ids,
-            thumbnail256Ids = thumbnail256Ids,
+            hasWebp = hasWebp,
             size = 128,
             crossfade = false,
             iconSize = 24.dp,
@@ -724,7 +732,7 @@ fun SongListItem(
         }
 
         // Action controls
-        IconButton(onClick = onFavoriteToggle) {
+        IconButton(onClick = { onFavoriteToggle(song) }) {
             Icon(
                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = "Favorito",
@@ -733,7 +741,7 @@ fun SongListItem(
             )
         }
 
-        IconButton(onClick = onAddToPlaylist) {
+        IconButton(onClick = { onAddToPlaylist(song) }) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
                 contentDescription = "Mas opciones",
@@ -768,8 +776,7 @@ fun SongListItem(
 @Composable
 fun AlbumGridItem(
     album: Album,
-    thumbnail128Ids: Set<Long>,
-    thumbnail256Ids: Set<Long>,
+    hasWebp: Boolean,
     onClick: () -> Unit
 ) {
     Card(
@@ -792,8 +799,7 @@ fun AlbumGridItem(
                     albumId = album.id,
                     coverUri = album.coverPath,
                     contentDescription = null,
-                    thumbnail128Ids = thumbnail128Ids,
-                    thumbnail256Ids = thumbnail256Ids,
+                    hasWebp = hasWebp,
                     size = 256,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -828,8 +834,7 @@ fun AlbumGridItem(
 
 @Composable
 fun PlaylistListItem(
-    playlist: Playlist,
-    songCount: Int,
+    playlist: PlaylistWithCount,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -873,7 +878,7 @@ fun PlaylistListItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "$songCount canciones",
+                    text = "${playlist.songCount} canciones",
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 12.sp
                 )
@@ -1065,8 +1070,6 @@ fun AlbumDetailScreen(
     val songs by libraryViewModel.getSongsByAlbum(albumId).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
-    val albumThumbnail128Ids by libraryViewModel.albumThumbnail128Ids.collectAsStateWithLifecycle()
     val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
@@ -1122,8 +1125,7 @@ fun AlbumDetailScreen(
                         albumId = albumId,
                         coverUri = songs.firstOrNull()?.artworkUri ?: "",
                         contentDescription = albumName,
-                        thumbnail128Ids = albumThumbnail128Ids,
-                        thumbnail256Ids = albumThumbnail256Ids,
+                        hasWebp = albumThumbnail256Ids.contains(albumId),
                         size = 256,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -1156,6 +1158,13 @@ fun AlbumDetailScreen(
                 }
             }
 
+            val onPlaySong: (Song) -> Unit = remember(songs, playbackViewModel) {
+                { song: Song -> playbackViewModel.playSong(song, songs) }
+            }
+            val onToggleFav: (Song) -> Unit = remember(libraryViewModel) {
+                { song: Song -> libraryViewModel.toggleFavorite(song) }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -1167,11 +1176,10 @@ fun AlbumDetailScreen(
                         isSelected = false,
                         isPlaying = false,
                         isFavorite = favoriteSongIds.contains(song.id),
-                        thumbnail128Ids = songThumbnail128Ids,
-                        thumbnail256Ids = songThumbnail256Ids,
-                        onSongSelected = { playbackViewModel.playSong(song, songs) },
-                        onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
-                        onAddToPlaylist = {}
+                        hasWebp = songThumbnail128Ids.contains(song.id),
+                        onSongSelected = onPlaySong,
+                        onFavoriteToggle = onToggleFav,
+                        onAddToPlaylist = NoOpSongAction
                     )
                 }
             }
@@ -1190,7 +1198,6 @@ fun ArtistDetailScreen(
     val songs by libraryViewModel.getSongsByArtist(artistName).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1258,6 +1265,13 @@ fun ArtistDetailScreen(
                 )
             }
 
+            val onPlaySong: (Song) -> Unit = remember(songs, playbackViewModel) {
+                { song: Song -> playbackViewModel.playSong(song, songs) }
+            }
+            val onToggleFav: (Song) -> Unit = remember(libraryViewModel) {
+                { song: Song -> libraryViewModel.toggleFavorite(song) }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -1269,11 +1283,10 @@ fun ArtistDetailScreen(
                         isSelected = false,
                         isPlaying = false,
                         isFavorite = favoriteSongIds.contains(song.id),
-                        thumbnail128Ids = songThumbnail128Ids,
-                        thumbnail256Ids = songThumbnail256Ids,
-                        onSongSelected = { playbackViewModel.playSong(song, songs) },
-                        onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
-                        onAddToPlaylist = {}
+                        hasWebp = songThumbnail128Ids.contains(song.id),
+                        onSongSelected = onPlaySong,
+                        onFavoriteToggle = onToggleFav,
+                        onAddToPlaylist = NoOpSongAction
                     )
                 }
             }
@@ -1293,7 +1306,6 @@ fun PlaylistDetailScreen(
     val songs by libraryViewModel.getSongsForPlaylist(playlistId).collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1377,6 +1389,16 @@ fun PlaylistDetailScreen(
                 }
             }
 
+            val onPlaySong: (Song) -> Unit = remember(songs, playbackViewModel) {
+                { song: Song -> playbackViewModel.playSong(song, songs) }
+            }
+            val onToggleFav: (Song) -> Unit = remember(libraryViewModel) {
+                { song: Song -> libraryViewModel.toggleFavorite(song) }
+            }
+            val onRemove: (Song) -> Unit = remember(playlistId, libraryViewModel) {
+                { song: Song -> libraryViewModel.removeSongFromPlaylist(playlistId, song.id) }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -1397,14 +1419,13 @@ fun PlaylistDetailScreen(
                                     isSelected = false,
                                     isPlaying = false,
                                     isFavorite = favoriteSongIds.contains(song.id),
-                                    thumbnail128Ids = songThumbnail128Ids,
-                                    thumbnail256Ids = songThumbnail256Ids,
-                                    onSongSelected = { playbackViewModel.playSong(song, songs) },
-                                    onFavoriteToggle = { libraryViewModel.toggleFavorite(song) },
-                                    onAddToPlaylist = {}
+                                    hasWebp = songThumbnail128Ids.contains(song.id),
+                                    onSongSelected = onPlaySong,
+                                    onFavoriteToggle = onToggleFav,
+                                    onAddToPlaylist = NoOpSongAction
                                 )
                             }
-                            IconButton(onClick = { libraryViewModel.removeSongFromPlaylist(playlistId, song.id) }) {
+                            IconButton(onClick = { onRemove(song) }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = "Quitar",
@@ -1625,16 +1646,14 @@ fun NoSearchResults(query: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun MiniPlayer(
-    state: PlaybackUiState,
+    song: Song,
+    isPlaying: Boolean,
     progressStateFlow: StateFlow<ProgressState>,
-    songThumbnail128Ids: Set<String>,
-    songThumbnail256Ids: Set<String>,
+    hasWebp: Boolean,
     onPlayPauseToggle: () -> Unit,
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val song = state.currentSong ?: return
-
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -1655,8 +1674,7 @@ fun MiniPlayer(
                 SongArtwork(
                     song = song,
                     contentDescription = "Mini player art",
-                    thumbnail128Ids = songThumbnail128Ids,
-                    thumbnail256Ids = songThumbnail256Ids,
+                    hasWebp = hasWebp,
                     size = 128,
                     crossfade = false,
                     iconSize = 20.dp,
@@ -1695,7 +1713,7 @@ fun MiniPlayer(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = "Play/Pause",
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
@@ -1740,18 +1758,14 @@ fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
 @Composable
 fun PlayerScreen(
     viewModel: PlaybackViewModel,
+    libraryViewModel: LibraryViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle(PlaybackUiState())
+    val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
+    val isPlaying by viewModel.isPlayingState.collectAsStateWithLifecycle()
     val currentSongColor by viewModel.currentSongColor.collectAsStateWithLifecycle(null)
-    // PlayerScreen needs song thumbnails for the large artwork display
-    // We don't have libraryViewModel here, so we collect from the shared flow if available.
-    // For now pass empty sets — the player uses crossfade=true and Coil's memory cache
-    // will serve the art already loaded in the list. A proper fix would pass libraryViewModel.
-    // TODO: thread libraryViewModel into PlayerScreen if artwork doesn't appear here.
-    val songThumbnail128Ids = remember { emptySet<String>() }
-    val songThumbnail256Ids = remember { emptySet<String>() }
+    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
     val defaultColor = Color(0xFF1E1B4B)
     val dominantColor = currentSongColor?.let { Color(it) } ?: defaultColor
 
@@ -1816,11 +1830,12 @@ fun PlayerScreen(
             val onPrevious = remember(viewModel) { { viewModel.previous() } }
             val onSeek = remember(viewModel) { { ms: Long -> viewModel.seekTo(ms) } }
 
+            val hasWebp256 = currentSong?.let { songThumbnail256Ids.contains(it.id) } ?: false
             PlayerCard(
-                state = state,
+                currentSong = currentSong,
+                isPlaying = isPlaying,
                 progressStateFlow = viewModel.progressState,
-                songThumbnail128Ids = songThumbnail128Ids,
-                songThumbnail256Ids = songThumbnail256Ids,
+                hasWebp256 = hasWebp256,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious,
@@ -1834,10 +1849,10 @@ fun PlayerScreen(
 
 @Composable
 fun PlayerCard(
-    state: PlaybackUiState,
+    currentSong: Song?,
+    isPlaying: Boolean,
     progressStateFlow: StateFlow<ProgressState>,
-    songThumbnail128Ids: Set<String>,
-    songThumbnail256Ids: Set<String>,
+    hasWebp256: Boolean,
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -1858,15 +1873,14 @@ fun PlayerCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Crossfade(
-                targetState = state.currentSong,
+                targetState = currentSong,
                 animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
                 label = "albumArtCrossfade"
-            ) { currentSong ->
+            ) { crossfadeSong ->
                 SongArtwork(
-                    song = currentSong,
+                    song = crossfadeSong,
                     contentDescription = "Album Art",
-                    thumbnail128Ids = songThumbnail128Ids,
-                    thumbnail256Ids = songThumbnail256Ids,
+                    hasWebp = hasWebp256,
                     size = 256,
                     crossfade = true,
                     iconSize = 80.dp,
@@ -1881,7 +1895,7 @@ fun PlayerCard(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = state.currentSong?.title ?: "No Song Playing",
+                text = currentSong?.title ?: "No Song Playing",
                 color = Color.White,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
@@ -1890,7 +1904,7 @@ fun PlayerCard(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = state.currentSong?.artist ?: "Unknown Artist",
+                text = currentSong?.artist ?: "Unknown Artist",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
@@ -1908,7 +1922,7 @@ fun PlayerCard(
             Spacer(modifier = Modifier.height(16.dp))
 
             PlaybackControls(
-                isPlaying = state.isPlaying,
+                isPlaying = isPlaying,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious

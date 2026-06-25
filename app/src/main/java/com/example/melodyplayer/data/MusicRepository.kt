@@ -509,6 +509,10 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
     val playlistsFlow = playlistDao.getAllPlaylists()
 
+    // Single subscription for the whole playlist list + song counts, instead of
+    // a separate Flow<Int> collected per row inside the LazyColumn.
+    val playlistsWithCountsFlow = playlistDao.getAllPlaylistsWithCounts()
+
     fun getFavoriteSongIds() = playlistDao.getPlaylistSongIdsFlow("Favoritas").map { it.toSet() }
 
     // ── Playlist actions ──────────────────────────────────────────────────────

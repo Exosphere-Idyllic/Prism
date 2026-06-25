@@ -104,10 +104,30 @@ interface ArtistDao {
     suspend fun deleteAll()
 }
 
+data class PlaylistWithCount(
+    val id: Long,
+    val name: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val songCount: Int
+)
+
 @Dao
 interface PlaylistDao {
     @Query("SELECT * FROM playlists ORDER BY name ASC")
     fun getAllPlaylists(): Flow<List<Playlist>>
+
+    // Single query for the whole list — avoids one Flow<Int> subscription per row.
+    // LEFT JOIN + GROUP BY so playlists with zero songs still come back with count = 0.
+    @Query("""
+        SELECT p.id AS id, p.name AS name, p.createdAt AS createdAt, p.updatedAt AS updatedAt,
+               COUNT(ps.songId) AS songCount
+        FROM playlists p
+        LEFT JOIN playlist_songs ps ON ps.playlistId = p.id
+        GROUP BY p.id
+        ORDER BY p.name ASC
+    """)
+    fun getAllPlaylistsWithCounts(): Flow<List<PlaylistWithCount>>
 
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun getPlaylistById(id: Long): Playlist?
