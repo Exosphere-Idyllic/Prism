@@ -1,6 +1,8 @@
 package com.example.melodyplayer.ui
 
+import kotlinx.collections.immutable.*
 import android.Manifest
+
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -138,19 +140,20 @@ fun SongArtwork(
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
 
-    val model = if (song == null) {
-        null
-    } else if (hasWebp) {
-        val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
-        Uri.fromFile(cacheFile).toString()
-    } else if (song.artworkUri.isNotEmpty()) {
-        song.artworkUri
-    } else {
-        null
+    val model = remember(song?.id, hasWebp, sizeSuffix) {
+        if (song == null) {
+            null
+        } else if (hasWebp) {
+            val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
+            Uri.fromFile(cacheFile).toString()
+        } else if (song.artworkUri.isNotEmpty()) {
+            song.artworkUri
+        } else {
+            null
+        }
     }
 
-    // key on song.id + hasWebp so the request is recreated only when the source changes
-    val imageRequest = remember(song?.id, hasWebp, size, crossfade) {
+    val imageRequest = remember(model, size, crossfade) {
         if (model == null) null
         else ImageRequest.Builder(context)
             .data(model)
@@ -161,20 +164,20 @@ fun SongArtwork(
             .build()
     }
 
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        if (imageRequest != null) {
-            AsyncImage(
-                model = imageRequest,
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                placeholder = DarkGrayPainter,
-                error = DarkGrayPainter
-            )
-        } else {
+    if (imageRequest != null) {
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+            placeholder = DarkGrayPainter,
+            error = DarkGrayPainter
+        )
+    } else {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
@@ -204,16 +207,18 @@ fun AlbumArtwork(
     val context = LocalContext.current
     val sizeSuffix = if (size <= 128) "128" else "256"
 
-    val model = if (hasWebp) {
-        val cacheFile = File(context.cacheDir, "album_art/album_${albumId}_$sizeSuffix.webp")
-        Uri.fromFile(cacheFile).toString()
-    } else if (coverUri.isNotEmpty()) {
-        coverUri
-    } else {
-        null
+    val model = remember(albumId, hasWebp, sizeSuffix) {
+        if (hasWebp) {
+            val cacheFile = File(context.cacheDir, "album_art/album_${albumId}_$sizeSuffix.webp")
+            Uri.fromFile(cacheFile).toString()
+        } else if (coverUri.isNotEmpty()) {
+            coverUri
+        } else {
+            null
+        }
     }
 
-    val imageRequest = remember(albumId, hasWebp, size, crossfade) {
+    val imageRequest = remember(model, size, crossfade) {
         if (model == null) null
         else ImageRequest.Builder(context)
             .data(model)
@@ -224,20 +229,20 @@ fun AlbumArtwork(
             .build()
     }
 
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        if (imageRequest != null) {
-            AsyncImage(
-                model = imageRequest,
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                placeholder = DarkGrayPainter,
-                error = DarkGrayPainter
-            )
-        } else {
+    if (imageRequest != null) {
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+            placeholder = DarkGrayPainter,
+            error = DarkGrayPainter
+        )
+    } else {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
@@ -655,16 +660,15 @@ fun SongList(
         ) { index ->
             val song = songs[index]
             if (song != null) {
-                val isSelected = song.id == currentSong?.id
                 val isFavorite = favoriteSongIds.contains(song.id)
-                val activePlayingState = isSelected && isPlaying
+                val hasWebp = songThumbnail128Ids.contains(song.id)
 
-                SongListItem(
+                SongListItemWrapper(
                     song = song,
-                    isSelected = isSelected,
-                    isPlaying = activePlayingState,
+                    currentSongId = currentSong?.id,
+                    isPlaying = isPlaying,
                     isFavorite = isFavorite,
-                    hasWebp = songThumbnail128Ids.contains(song.id),
+                    hasWebp = hasWebp,
                     onSongSelected = onSongSelected,
                     onFavoriteToggle = onFavoriteToggle,
                     onAddToPlaylist = onAddToPlaylist
@@ -673,6 +677,32 @@ fun SongList(
         }
         item(contentType = "spacer") { Spacer(modifier = Modifier.height(96.dp)) }
     }
+}
+
+@Composable
+fun SongListItemWrapper(
+    song: Song,
+    currentSongId: String?,
+    isPlaying: Boolean,
+    isFavorite: Boolean,
+    hasWebp: Boolean,
+    onSongSelected: (Song) -> Unit,
+    onFavoriteToggle: (Song) -> Unit,
+    onAddToPlaylist: (Song) -> Unit
+) {
+    val isSelected = song.id == currentSongId
+    val activePlayingState = isSelected && isPlaying
+
+    SongListItem(
+        song = song,
+        isSelected = isSelected,
+        isPlaying = activePlayingState,
+        isFavorite = isFavorite,
+        hasWebp = hasWebp,
+        onSongSelected = onSongSelected,
+        onFavoriteToggle = onFavoriteToggle,
+        onAddToPlaylist = onAddToPlaylist
+    )
 }
 
 @Composable
@@ -1067,10 +1097,13 @@ fun AlbumDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val songs by libraryViewModel.getSongsByAlbum(albumId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawSongs by libraryViewModel.getSongsByAlbum(albumId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val songs = remember(rawSongs) { rawSongs.toImmutableList() }
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
     val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
+    val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
+    val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1114,18 +1147,18 @@ fun AlbumDetailScreen(
                     .padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val hasWebp = albumThumbnail256Ids.contains(albumId)
                 Box(
                     modifier = Modifier
                         .size(160.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.White.copy(alpha = 0.05f))
-                        .shadow(16.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.White.copy(alpha = 0.04f))
                 ) {
                     AlbumArtwork(
                         albumId = albumId,
                         coverUri = songs.firstOrNull()?.artworkUri ?: "",
-                        contentDescription = albumName,
-                        hasWebp = albumThumbnail256Ids.contains(albumId),
+                        contentDescription = "Carátula del álbum",
+                        hasWebp = hasWebp,
                         size = 256,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -1171,12 +1204,15 @@ fun AlbumDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(songs, key = { it.id }) { song ->
-                    SongListItem(
+                    val isFavorite = favoriteSongIds.contains(song.id)
+                    val hasWebp = songThumbnail128Ids.contains(song.id)
+
+                    SongListItemWrapper(
                         song = song,
-                        isSelected = false,
-                        isPlaying = false,
-                        isFavorite = favoriteSongIds.contains(song.id),
-                        hasWebp = songThumbnail128Ids.contains(song.id),
+                        currentSongId = currentSong?.id,
+                        isPlaying = isPlaying,
+                        isFavorite = isFavorite,
+                        hasWebp = hasWebp,
                         onSongSelected = onPlaySong,
                         onFavoriteToggle = onToggleFav,
                         onAddToPlaylist = NoOpSongAction
@@ -1195,9 +1231,12 @@ fun ArtistDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val songs by libraryViewModel.getSongsByArtist(artistName).collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawSongs by libraryViewModel.getSongsByArtist(artistName).collectAsStateWithLifecycle(initialValue = emptyList())
+    val songs = remember(rawSongs) { rawSongs.toImmutableList() }
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
+    val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1278,12 +1317,15 @@ fun ArtistDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(songs, key = { it.id }) { song ->
-                    SongListItem(
+                    val isFavorite = favoriteSongIds.contains(song.id)
+                    val hasWebp = songThumbnail128Ids.contains(song.id)
+
+                    SongListItemWrapper(
                         song = song,
-                        isSelected = false,
-                        isPlaying = false,
-                        isFavorite = favoriteSongIds.contains(song.id),
-                        hasWebp = songThumbnail128Ids.contains(song.id),
+                        currentSongId = currentSong?.id,
+                        isPlaying = isPlaying,
+                        isFavorite = isFavorite,
+                        hasWebp = hasWebp,
                         onSongSelected = onPlaySong,
                         onFavoriteToggle = onToggleFav,
                         onAddToPlaylist = NoOpSongAction
@@ -1303,9 +1345,12 @@ fun PlaylistDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val songs by libraryViewModel.getSongsForPlaylist(playlistId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawSongs by libraryViewModel.getSongsForPlaylist(playlistId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val songs = remember(rawSongs) { rawSongs.toImmutableList() }
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
     val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
+    val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
 
     val backgroundBrush = remember {
         Brush.verticalGradient(
@@ -1414,12 +1459,15 @@ fun PlaylistDetailScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Box(modifier = Modifier.weight(1f)) {
-                                SongListItem(
+                                val isFavorite = favoriteSongIds.contains(song.id)
+                                val hasWebp = songThumbnail128Ids.contains(song.id)
+
+                                SongListItemWrapper(
                                     song = song,
-                                    isSelected = false,
-                                    isPlaying = false,
-                                    isFavorite = favoriteSongIds.contains(song.id),
-                                    hasWebp = songThumbnail128Ids.contains(song.id),
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = isPlaying,
+                                    isFavorite = isFavorite,
+                                    hasWebp = hasWebp,
                                     onSongSelected = onPlaySong,
                                     onFavoriteToggle = onToggleFav,
                                     onAddToPlaylist = NoOpSongAction

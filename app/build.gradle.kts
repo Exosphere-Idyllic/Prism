@@ -117,6 +117,12 @@ dependencies {
 
   // WorkManager
   implementation(libs.androidx.work.runtime)
+
+  // Performance monitoring (JankStats)
+  implementation(libs.androidx.metrics.performance)
+
+  // Immutable Collections for Compose stability
+  implementation(libs.kotlinx.collections.immutable)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {
@@ -125,4 +131,9 @@ tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().co
     kaptProcessJvmArgs.add("-Djava.io.tmpdir=${tmpDir.absolutePath}")
     kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=${tmpDir.absolutePath}")
 }
+
+composeCompiler {
+    enableStrongSkippingMode = true
+}
+
 
