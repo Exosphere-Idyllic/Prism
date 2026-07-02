@@ -54,12 +54,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
-    private var songIdToIndexMap = emptyMap<String, Int>()
+    private var activePlaylist: List<Song> = emptyList()
+    private var controllerSongs: List<Song> = emptyList()
 
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
-    private var lastControllerSongs: List<Song> = emptyList()
     private var playerListener: Player.Listener? = null
 
     private val _currentSongColor = MutableStateFlow<Int?>(null)
@@ -72,8 +72,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val songs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
             _allSongs.value = songs
-            songIdToIndexMap = songs.indices.associateBy { songs[it].id }
-            mediaController?.let { updateControllerMediaItems(it, songs) }
         }
     }
 
@@ -88,11 +86,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             currentPosition = controller.currentPosition.coerceAtLeast(0L),
             duration = controller.duration.coerceAtLeast(0L)
         )
+        if (activePlaylist.isEmpty() && controller.mediaItemCount > 0) {
+            activePlaylist = songs
+        }
     }
 
-    private fun updateControllerMediaItems(controller: MediaController, songs: List<Song>) {
-        if (lastControllerSongs == songs && controller.mediaItemCount > 0) return
-        lastControllerSongs = songs
+    private fun updateControllerMediaItems(
+        controller: MediaController,
+        songs: List<Song>,
+        onComplete: () -> Unit = {}
+    ) {
+        if (controllerSongs == songs && controller.mediaItemCount > 0) {
+            onComplete()
+            return
+        }
+        controllerSongs = songs
 
         viewModelScope.launch(Dispatchers.Default) {
             val mediaItems = songs.map { song ->
@@ -112,6 +120,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 controller.setMediaItems(mediaItems)
                 if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
                 syncStateFromController(controller, songs)
+                onComplete()
             }
         }
     }
@@ -132,9 +141,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private fun setupController(controller: MediaController) {
         playerListener?.let { controller.removeListener(it) }
-        
-        if (controller.mediaItemCount == 0 && _allSongs.value.isNotEmpty()) {
-            updateControllerMediaItems(controller, _allSongs.value)
+
+        // Do NOT push all songs into ExoPlayer on startup — that IPC call with
+        // thousands of MediaItems is the primary cause of the 50s+ startup freeze.
+        // Songs are loaded lazily only when the user actually triggers playback.
+        // If the service already has items (resumed session), just sync UI state.
+        if (controller.mediaItemCount > 0) {
+            syncStateFromController(controller, controllerSongs)
         }
 
         val listener = object : Player.Listener {
@@ -144,10 +157,22 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val songs = _allSongs.value
-                val song = songs.find { it.id == mediaItem?.mediaId }
+                // Look up in controllerSongs (the window currently loaded in ExoPlayer)
+                // then fall back to the full library so next/previous always resolves.
+                val song = controllerSongs.find { it.id == mediaItem?.mediaId }
+                    ?: _allSongs.value.find { it.id == mediaItem?.mediaId }
                 _uiState.value = _uiState.value.copy(currentSong = song)
                 _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
+
+                if (song != null && activePlaylist.isNotEmpty()) {
+                    val currentIndex = controllerSongs.indexOfFirst { it.id == song.id }
+                    if (currentIndex != -1) {
+                        val threshold = 5
+                        if (currentIndex < threshold || currentIndex >= controllerSongs.size - threshold) {
+                            shiftWindow(controller, song)
+                        }
+                    }
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -157,21 +182,76 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         controller.addListener(listener)
         playerListener = listener
         if (controller.isPlaying) startProgressUpdate()
-        syncStateFromController(controller, _allSongs.value)
+    }
+
+    private fun buildPlaybackWindow(song: Song, playlist: List<Song>, windowSize: Int = 50): Pair<List<Song>, Int> {
+        val index = playlist.indexOfFirst { it.id == song.id }
+        if (index == -1) return Pair(listOf(song), 0)
+        
+        val half = windowSize / 2
+        val start = (index - half).coerceAtLeast(0)
+        val end = (index + half).coerceAtMost(playlist.size)
+        val windowSongs = playlist.subList(start, end)
+        val windowIndex = index - start
+        return Pair(windowSongs, windowIndex)
+    }
+
+    private fun shiftWindow(controller: MediaController, currentSong: Song) {
+        val playlist = activePlaylist
+        if (playlist.isEmpty()) return
+        
+        val (windowSongs, windowIndex) = buildPlaybackWindow(currentSong, playlist)
+        if (controllerSongs == windowSongs) return
+        
+        controllerSongs = windowSongs
+        
+        viewModelScope.launch(Dispatchers.Default) {
+            val mediaItems = windowSongs.map { song ->
+                MediaItem.Builder()
+                    .setMediaId(song.id)
+                    .setUri(song.mediaUri.toUri())
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(song.artist)
+                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) song.artworkUri.toUri() else null)
+                            .build()
+                    )
+                    .build()
+            }
+            withContext(Dispatchers.Main) {
+                val currentPos = controller.currentPosition
+                val wasPlaying = controller.isPlaying
+                controller.setMediaItems(mediaItems, windowIndex, currentPos)
+                if (wasPlaying) {
+                    controller.play()
+                }
+            }
+        }
     }
 
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList()) {
         val controller = mediaController ?: return
-        val listToUse = playlistSongs.ifEmpty { _allSongs.value }
         
-        if (lastControllerSongs != listToUse) {
-            updateControllerMediaItems(controller, listToUse)
-        }
-        
-        val index = listToUse.indexOfFirst { it.id == song.id }
-        if (index != -1) {
-            controller.seekTo(index, 0)
-            controller.play()
+        viewModelScope.launch {
+            val listToUse = if (playlistSongs.isNotEmpty()) {
+                playlistSongs
+            } else {
+                if (_allSongs.value.isEmpty()) {
+                    val dbSongs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
+                    _allSongs.value = dbSongs
+                    dbSongs
+                } else {
+                    _allSongs.value
+                }
+            }
+            activePlaylist = listToUse
+
+            val (windowSongs, windowIndex) = buildPlaybackWindow(song, listToUse)
+            updateControllerMediaItems(controller, windowSongs) {
+                controller.seekTo(windowIndex, 0)
+                controller.play()
+            }
         }
     }
 

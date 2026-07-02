@@ -37,4 +37,29 @@ interface ThumbnailCacheDao {
     /** Remove orphaned album entries (e.g. after a full library rebuild). */
     @Query("DELETE FROM thumbnail_cache WHERE type = 'album' AND entityId NOT IN (:albumIds)")
     suspend fun deleteOrphanedAlbumEntries(albumIds: List<String>)
+
+    @Query("SELECT entityId, type, size FROM thumbnail_cache")
+    suspend fun getAllInfo(): List<ThumbnailCacheInfo>
+
+    @Query("SELECT entityId FROM thumbnail_cache WHERE type = 'album' AND size = 128")
+    suspend fun getAlbum128Ids(): List<String>
+
+    @Query("SELECT entityId FROM thumbnail_cache WHERE type = 'album' AND size = 256")
+    suspend fun getAlbum256Ids(): List<String>
+
+    @Query("SELECT entityId FROM thumbnail_cache WHERE type = 'song' AND size = 128")
+    suspend fun getSong128Ids(): List<String>
+
+    @Query("SELECT entityId FROM thumbnail_cache WHERE type = 'song' AND size = 256")
+    suspend fun getSong256Ids(): List<String>
+
+    @Query("SELECT cacheKey FROM thumbnail_cache")
+    suspend fun getAllKeys(): List<String>
 }
+
+data class ThumbnailCacheInfo(
+    val entityId: String,
+    val type: String,
+    val size: Int
+)
+

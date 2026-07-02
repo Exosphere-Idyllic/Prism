@@ -27,23 +27,23 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val songDao = database.songDao()
         val thumbnailCacheDao = database.thumbnailCacheDao()
 
-        val allSongs = songDao.getAllSongs()
+        val allSongs = songDao.getSongThumbnailInfo()
         val cacheDir = File(applicationContext.cacheDir, "album_art")
         if (!cacheDir.exists()) cacheDir.mkdirs()
 
-        val cached = thumbnailCacheDao.getAll().associateBy { it.cacheKey }
+        val cached = thumbnailCacheDao.getAllKeys().toSet()
 
         val uniqueAlbums = allSongs
             .filter { it.albumId > 0 && it.artworkUri.isNotEmpty() }
             .associateBy { it.albumId }
 
         val missingAlbums = uniqueAlbums.filter { (albumId, _) ->
-            !cached.containsKey("album_${albumId}_128") || !cached.containsKey("album_${albumId}_256")
+            !cached.contains("album_${albumId}_128") || !cached.contains("album_${albumId}_256")
         }
 
         val missingSongs = allSongs.filter { song ->
             song.mediaUri.isNotEmpty() &&
-                (!cached.containsKey("song_${song.id}_128") || !cached.containsKey("song_${song.id}_256"))
+                (!cached.contains("song_${song.id}_128") || !cached.contains("song_${song.id}_256"))
         }
 
         val semaphore = Semaphore(2)
@@ -65,8 +65,20 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
             }
         }
 
-        missingSongs.forEach { song ->
+        missingSongs.forEach { songInfo ->
             semaphore.withPermit {
+                val song = Song(
+                    id = songInfo.id,
+                    title = "",
+                    artist = "",
+                    album = "",
+                    albumId = songInfo.albumId,
+                    mediaUri = songInfo.mediaUri,
+                    artworkUri = songInfo.artworkUri,
+                    duration = 0L,
+                    dateModified = 0L,
+                    track = 0
+                )
                 val file128 = File(cacheDir, "song_${song.id}_128.webp")
                 val file256 = File(cacheDir, "song_${song.id}_256.webp")
                 val sizes = ThumbnailHelper.generateSongWebp(applicationContext, song, file128, file256)

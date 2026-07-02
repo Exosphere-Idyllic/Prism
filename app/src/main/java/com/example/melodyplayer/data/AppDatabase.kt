@@ -17,8 +17,18 @@ data class SongSyncInfo(
     val dateModified: Long
 )
 
+data class SongThumbnailInfo(
+    val id: String,
+    val artworkUri: String,
+    val mediaUri: String,
+    val albumId: Long
+)
+
 @Dao
 abstract class SongDao {
+    @Query("SELECT id, artworkUri, mediaUri, albumId FROM songs")
+    abstract suspend fun getSongThumbnailInfo(): List<SongThumbnailInfo>
+
     @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract suspend fun getAllSongs(): List<Song>
 

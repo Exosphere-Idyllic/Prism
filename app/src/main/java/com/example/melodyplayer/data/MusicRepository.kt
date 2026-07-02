@@ -163,8 +163,12 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
             // 3. Query MediaStore
             val scanFilter = if (roomSongsInfo.isEmpty()) 0L else lastScanTimestamp
-            val mediaStoreIds = queryMediaStoreIds()
             val changedSongs = queryMediaStore(scanFilter)
+            val mediaStoreIds = if (scanFilter == 0L) {
+                changedSongs.map { it.id.toLongOrNull() ?: -1L }.toSet()
+            } else {
+                queryMediaStoreIds()
+            }
 
             // 4. Identify changes (incremental)
             val toUpsert = mutableListOf<Song>()
@@ -204,7 +208,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
             // 6. Update albums and artists
             if (toUpsert.isNotEmpty() || toDelete.isNotEmpty()) {
-                updateAlbumsAndArtistsIncrementally(toUpsert, oldSongs, songsToDelete)
+                updateAlbumsAndArtistsIncrementally(toUpsert, oldSongs, songsToDelete, roomSongsInfo.isEmpty())
             }
 
             lastScanTimestamp = (System.currentTimeMillis() / 1000L) - 5
@@ -215,7 +219,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
             // 8. Trigger WorkManager for background thumbnail pre-generation
             try {
-                val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>().build()
+                val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>()
+                    .setInitialDelay(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
                 WorkManager.getInstance(app).enqueueUniqueWork(
                     "thumbnail_pre_generation",
                     ExistingWorkPolicy.REPLACE,
@@ -306,10 +312,10 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     private suspend fun updateAlbumsAndArtistsIncrementally(
         toUpsert: List<Song>,
         oldSongs: List<Song>,
-        songsToDelete: List<Song>
+        songsToDelete: List<Song>,
+        isFullScan: Boolean
     ) {
-        val totalChanges = toUpsert.size + songsToDelete.size
-        if (totalChanges > 50) {
+        if (isFullScan) {
             updateAlbumsAndArtists()
             return
         }
@@ -395,23 +401,10 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
      */
     private suspend fun loadThumbnailIndexFromDb() {
         try {
-            val entries = thumbnailCacheDao.getAll()
-            val album128 = mutableSetOf<Long>()
-            val album256 = mutableSetOf<Long>()
-            val song128 = mutableSetOf<String>()
-            val song256 = mutableSetOf<String>()
-
-            for (entry in entries) {
-                when (entry.type) {
-                    "album" -> {
-                        val albumId = entry.entityId.toLongOrNull() ?: continue
-                        if (entry.size == 128) album128.add(albumId) else album256.add(albumId)
-                    }
-                    "song" -> {
-                        if (entry.size == 128) song128.add(entry.entityId) else song256.add(entry.entityId)
-                    }
-                }
-            }
+            val album128 = thumbnailCacheDao.getAlbum128Ids().mapNotNull { it.toLongOrNull() }.toSet()
+            val album256 = thumbnailCacheDao.getAlbum256Ids().mapNotNull { it.toLongOrNull() }.toSet()
+            val song128 = thumbnailCacheDao.getSong128Ids().toSet()
+            val song256 = thumbnailCacheDao.getSong256Ids().toSet()
 
             // Emit all four sets at once — single StateFlow update per set
             _albumThumbnail128Ids.value = album128
