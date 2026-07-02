@@ -1,6 +1,7 @@
 package com.example.melodyplayer.data
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Insert
@@ -11,6 +12,7 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 
 data class SongSyncInfo(
     val id: String,
@@ -201,6 +203,17 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
+                // Cleanup old volatile cache directory
+                try {
+                    val oldCacheDir = File(context.cacheDir, "album_art")
+                    if (oldCacheDir.exists()) {
+                        oldCacheDir.deleteRecursively()
+                        Log.d("AppDatabase", "Cleaned up old cache directory")
+                    }
+                } catch (e: Exception) {
+                    Log.w("AppDatabase", "Failed to cleanup old cache directory", e)
+                }
+
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,

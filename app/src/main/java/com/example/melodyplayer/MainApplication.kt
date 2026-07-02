@@ -18,7 +18,12 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
             }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(context.cacheDir.resolve("coil_image_cache").absolutePath.toPath())
+                    .directory(
+                        context.getDir("coil_cache", Context.MODE_PRIVATE)
+                            .resolve("coil_image_cache")
+                            .absolutePath
+                            .toPath()
+                    )
                     .maxSizeBytes(50L * 1024 * 1024) // 50 MB en disco
                     .build()
             }

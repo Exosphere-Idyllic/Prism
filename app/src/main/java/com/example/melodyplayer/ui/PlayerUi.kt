@@ -2,6 +2,7 @@ package com.example.melodyplayer.ui
 
 import kotlinx.collections.immutable.*
 import android.Manifest
+import com.example.melodyplayer.data.ThumbnailManager
 
 import android.net.Uri
 import android.os.Build
@@ -144,7 +145,8 @@ fun SongArtwork(
         if (song == null) {
             null
         } else if (hasWebp) {
-            val cacheFile = File(context.cacheDir, "album_art/song_${song.id}_$sizeSuffix.webp")
+            val sizeInt = if (sizeSuffix == "128") 128 else 256
+            val cacheFile = ThumbnailManager.getSongThumbnailFile(context, song.id, sizeInt)
             Uri.fromFile(cacheFile).toString()
         } else if (song.artworkUri.isNotEmpty()) {
             song.artworkUri
@@ -209,7 +211,8 @@ fun AlbumArtwork(
 
     val model = remember(albumId, hasWebp, sizeSuffix) {
         if (hasWebp) {
-            val cacheFile = File(context.cacheDir, "album_art/album_${albumId}_$sizeSuffix.webp")
+            val sizeInt = if (sizeSuffix == "128") 128 else 256
+            val cacheFile = ThumbnailManager.getAlbumThumbnailFile(context, albumId, sizeInt)
             Uri.fromFile(cacheFile).toString()
         } else if (coverUri.isNotEmpty()) {
             coverUri

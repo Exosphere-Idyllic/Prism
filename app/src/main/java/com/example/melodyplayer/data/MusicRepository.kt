@@ -218,17 +218,19 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             _isLoading.value = false
 
             // 8. Trigger WorkManager for background thumbnail pre-generation
-            try {
-                val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>()
-                    .setInitialDelay(5, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                WorkManager.getInstance(app).enqueueUniqueWork(
-                    "thumbnail_pre_generation",
-                    ExistingWorkPolicy.REPLACE,
-                    workRequest
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to schedule background thumbnail work", e)
+            if (toUpsert.isNotEmpty() || toDelete.isNotEmpty() || roomSongsInfo.isEmpty()) {
+                try {
+                    val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>()
+                        .setInitialDelay(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                    WorkManager.getInstance(app).enqueueUniqueWork(
+                        "thumbnail_pre_generation",
+                        ExistingWorkPolicy.KEEP,
+                        workRequest
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to schedule background thumbnail work", e)
+                }
             }
         }
     }
@@ -425,14 +427,11 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     }
 
     private suspend fun processThumbnailRequest(request: ThumbnailRequest) {
-        val cacheDir = File(app.cacheDir, "album_art")
-        if (!cacheDir.exists()) cacheDir.mkdirs()
-
         when (request) {
             is ThumbnailRequest.Album -> {
                 val albumId = request.albumId
-                val file128 = File(cacheDir, "album_${albumId}_128.webp")
-                val file256 = File(cacheDir, "album_${albumId}_256.webp")
+                val file128 = ThumbnailManager.getAlbumThumbnailFile(app, albumId, 128)
+                val file256 = ThumbnailManager.getAlbumThumbnailFile(app, albumId, 256)
                 if (!file128.exists() || !file256.exists()) {
                     val sizes = ThumbnailHelper.generateWebpFromUri(app, request.artworkUri, file128, file256, albumId)
                     if (sizes.contains(128)) {
@@ -458,8 +457,8 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             }
             is ThumbnailRequest.SongRequest -> {
                 val song = request.song
-                val file128 = File(cacheDir, "song_${song.id}_128.webp")
-                val file256 = File(cacheDir, "song_${song.id}_256.webp")
+                val file128 = ThumbnailManager.getSongThumbnailFile(app, song.id, 128)
+                val file256 = ThumbnailManager.getSongThumbnailFile(app, song.id, 256)
                 if (!file128.exists() || !file256.exists()) {
                     val sizes = ThumbnailHelper.generateSongWebp(app, song, file128, file256)
                     if (sizes.contains(128)) {
