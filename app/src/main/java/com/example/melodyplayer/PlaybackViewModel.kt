@@ -67,12 +67,8 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     init {
         initializeController()
-        
-        // Load songs from DB for player state
-        viewModelScope.launch {
-            val songs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
-            _allSongs.value = songs
-        }
+        // Songs are loaded lazily in playSong() only when playback is triggered.
+        // This avoids the startup bottleneck of loading 597+ rows into memory.
     }
 
     private fun syncStateFromController(controller: MediaController, songs: List<Song>) {

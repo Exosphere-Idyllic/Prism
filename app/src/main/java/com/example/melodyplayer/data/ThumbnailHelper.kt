@@ -58,14 +58,18 @@ object ThumbnailHelper {
                 val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
 
                 if (!file128.exists()) {
-                    square.scale(128, 128).compress(format, 80, FileOutputStream(file128))
+                    val scaled128 = square.scale(128, 128)
+                    scaled128.compress(format, 80, FileOutputStream(file128))
+                    if (scaled128 != square) scaled128.recycle()
                 }
                 if (file128.exists()) {
                     successSizes.add(128)
                 }
 
                 if (!file256.exists()) {
-                    square.scale(256, 256).compress(format, 80, FileOutputStream(file256))
+                    val scaled256 = square.scale(256, 256)
+                    scaled256.compress(format, 80, FileOutputStream(file256))
+                    if (scaled256 != square) scaled256.recycle()
                 }
                 if (file256.exists()) {
                     successSizes.add(256)
@@ -90,21 +94,10 @@ object ThumbnailHelper {
         try {
             var bitmap: Bitmap? = null
 
-            // Try loading from artworkUri first since it's faster and uses standard content resolver
-            if (song.artworkUri.isNotEmpty()) {
-                try {
-                    val uri = Uri.parse(song.artworkUri)
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        val bytes = input.readBytes()
-                        bitmap = decodeSampledBitmapFromBytes(bytes, 512, 512)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to load album art from artworkUri for song ${song.id}", e)
-                }
-            }
-
-            // Fallback to MediaMetadataRetriever if artworkUri is empty or failed to load
-            if (bitmap == null && song.mediaUri.isNotEmpty()) {
+            // Try MediaMetadataRetriever FIRST — this extracts the song's own
+            // embedded artwork (ID3 tag / Vorbis picture), giving each track
+            // its individual cover even when multiple songs share the same album.
+            if (song.mediaUri.isNotEmpty()) {
                 var retriever: MediaMetadataRetriever? = null
                 try {
                     retriever = MediaMetadataRetriever()
@@ -114,11 +107,24 @@ object ThumbnailHelper {
                         bitmap = decodeSampledBitmapFromBytes(artBytes, 512, 512)
                     }
                 } catch (e: Exception) {
-                    // Not a fatal issue
+                    // Not a fatal issue — fall through to artworkUri
                 } finally {
                     try {
                         retriever?.close()
-                    } catch (e: Exception) {}
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Fallback to album artworkUri if no embedded art was found
+            if (bitmap == null && song.artworkUri.isNotEmpty()) {
+                try {
+                    val uri = Uri.parse(song.artworkUri)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readBytes()
+                        bitmap = decodeSampledBitmapFromBytes(bytes, 512, 512)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to load album art from artworkUri for song ${song.id}", e)
                 }
             }
 
@@ -132,14 +138,18 @@ object ThumbnailHelper {
             val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
 
             if (!file128.exists()) {
-                square.scale(128, 128).compress(format, 80, FileOutputStream(file128))
+                val scaled128 = square.scale(128, 128)
+                scaled128.compress(format, 80, FileOutputStream(file128))
+                if (scaled128 != square) scaled128.recycle()
             }
             if (file128.exists()) {
                 successSizes.add(128)
             }
 
             if (!file256.exists()) {
-                square.scale(256, 256).compress(format, 80, FileOutputStream(file256))
+                val scaled256 = square.scale(256, 256)
+                scaled256.compress(format, 80, FileOutputStream(file256))
+                if (scaled256 != square) scaled256.recycle()
             }
             if (file256.exists()) {
                 successSizes.add(256)

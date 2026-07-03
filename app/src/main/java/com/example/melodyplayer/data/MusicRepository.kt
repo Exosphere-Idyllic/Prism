@@ -71,10 +71,12 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     val songThumbnail256Ids = _songThumbnail256Ids.asStateFlow()
 
     // ── Internal helpers ──────────────────────────────────────────────────────
-    private fun addAlbum128(albumId: Long) = _albumThumbnail128Ids.update { it + albumId }
-    private fun addAlbum256(albumId: Long) = _albumThumbnail256Ids.update { it + albumId }
-    private fun addSong128(songId: String) = _songThumbnail128Ids.update { it + songId }
-    private fun addSong256(songId: String) = _songThumbnail256Ids.update { it + songId }
+    // Guards: only emit a new Set if the ID wasn't already present.
+    // This avoids redundant StateFlow emissions and recomposition triggers.
+    private fun addAlbum128(albumId: Long) = _albumThumbnail128Ids.update { set -> if (albumId in set) set else set + albumId }
+    private fun addAlbum256(albumId: Long) = _albumThumbnail256Ids.update { set -> if (albumId in set) set else set + albumId }
+    private fun addSong128(songId: String) = _songThumbnail128Ids.update { set -> if (songId in set) set else set + songId }
+    private fun addSong256(songId: String) = _songThumbnail256Ids.update { set -> if (songId in set) set else set + songId }
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -400,13 +402,27 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
      * Reads the thumbnail index from Room and populates the StateFlow sets.
      * Called once per scan at startup — after this, sets are updated incrementally
      * by processThumbnailRequest as new thumbnails are generated.
+     *
+     * Uses a single query (getAllInfo) instead of 4 separate queries,
+     * then partitions the results in memory.
      */
     private suspend fun loadThumbnailIndexFromDb() {
         try {
-            val album128 = thumbnailCacheDao.getAlbum128Ids().mapNotNull { it.toLongOrNull() }.toSet()
-            val album256 = thumbnailCacheDao.getAlbum256Ids().mapNotNull { it.toLongOrNull() }.toSet()
-            val song128 = thumbnailCacheDao.getSong128Ids().toSet()
-            val song256 = thumbnailCacheDao.getSong256Ids().toSet()
+            val allInfo = thumbnailCacheDao.getAllInfo()
+
+            val album128 = mutableSetOf<Long>()
+            val album256 = mutableSetOf<Long>()
+            val song128 = mutableSetOf<String>()
+            val song256 = mutableSetOf<String>()
+
+            for (info in allInfo) {
+                when {
+                    info.type == "album" && info.size == 128 -> info.entityId.toLongOrNull()?.let { album128.add(it) }
+                    info.type == "album" && info.size == 256 -> info.entityId.toLongOrNull()?.let { album256.add(it) }
+                    info.type == "song" && info.size == 128 -> song128.add(info.entityId)
+                    info.type == "song" && info.size == 256 -> song256.add(info.entityId)
+                }
+            }
 
             // Emit all four sets at once — single StateFlow update per set
             _albumThumbnail128Ids.value = album128
