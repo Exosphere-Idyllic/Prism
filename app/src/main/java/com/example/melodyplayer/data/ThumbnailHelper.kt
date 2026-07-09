@@ -36,6 +36,30 @@ object ThumbnailHelper {
         return BitmapFactory.decodeByteArray(data, 0, data.size, opts)
     }
 
+    /**
+     * Writes a [bitmap] to [dest] atomically: first encodes into a sibling `.tmp` file,
+     * then renames it into place. This guarantees that [dest] is never left in a
+     * partially-written / zero-byte state if the process is interrupted mid-write.
+     *
+     * @return true if the file was successfully written and renamed.
+     */
+    private fun writeBitmapAtomically(bitmap: Bitmap, dest: File, format: Bitmap.CompressFormat, quality: Int): Boolean {
+        val tmp = File(dest.parent, "${dest.name}.tmp")
+        return try {
+            FileOutputStream(tmp).use { out ->
+                bitmap.compress(format, quality, out)
+                out.flush()
+            }
+            // Atomically replace the destination
+            if (dest.exists()) dest.delete()
+            tmp.renameTo(dest)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write bitmap to ${dest.name}", e)
+            tmp.delete()
+            false
+        }
+    }
+
     fun generateWebpFromUri(
         context: Context,
         artworkUri: String,
@@ -48,7 +72,14 @@ object ThumbnailHelper {
             val uri = artworkUri.toUri()
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val bytes = input.readBytes()
-                val original = decodeSampledBitmapFromBytes(bytes, 512, 512) ?: return emptyList()
+                if (bytes.isEmpty()) {
+                    Log.w(TAG, "Empty artwork bytes for albumId=$albumId uri=$artworkUri")
+                    return emptyList()
+                }
+                val original = decodeSampledBitmapFromBytes(bytes, 512, 512) ?: run {
+                    Log.w(TAG, "Failed to decode bitmap for albumId=$albumId")
+                    return emptyList()
+                }
 
                 val square = if (original.width == original.height) original else {
                     val size = minOf(original.width, original.height)
@@ -59,27 +90,29 @@ object ThumbnailHelper {
 
                 if (!file128.exists()) {
                     val scaled128 = square.scale(128, 128)
-                    scaled128.compress(format, 80, FileOutputStream(file128))
+                    val ok = writeBitmapAtomically(scaled128, file128, format, 80)
                     if (scaled128 != square) scaled128.recycle()
+                    if (ok) {
+                        Log.d(TAG, "Wrote album_${albumId}_128.webp (${file128.length()} bytes)")
+                    }
                 }
-                if (file128.exists()) {
-                    successSizes.add(128)
-                }
+                if (file128.exists() && file128.length() > 0) successSizes.add(128)
 
                 if (!file256.exists()) {
                     val scaled256 = square.scale(256, 256)
-                    scaled256.compress(format, 80, FileOutputStream(file256))
+                    val ok = writeBitmapAtomically(scaled256, file256, format, 80)
                     if (scaled256 != square) scaled256.recycle()
+                    if (ok) {
+                        Log.d(TAG, "Wrote album_${albumId}_256.webp (${file256.length()} bytes)")
+                    }
                 }
-                if (file256.exists()) {
-                    successSizes.add(256)
-                }
+                if (file256.exists() && file256.length() > 0) successSizes.add(256)
 
                 if (square != original) square.recycle()
                 original.recycle()
-            }
+            } ?: Log.w(TAG, "openInputStream returned null for albumId=$albumId uri=$artworkUri")
         } catch (e: Exception) {
-            Log.w(TAG, "Thumb gen failed for $artworkUri", e)
+            Log.e(TAG, "Thumb gen failed for albumId=$albumId uri=$artworkUri", e)
         }
         return successSizes
     }
@@ -107,6 +140,7 @@ object ThumbnailHelper {
                         bitmap = decodeSampledBitmapFromBytes(artBytes, 512, 512)
                     }
                 } catch (e: Exception) {
+                    Log.d(TAG, "No embedded art for song ${song.id}: ${e.message}")
                     // Not a fatal issue — fall through to artworkUri
                 } finally {
                     try {
@@ -122,13 +156,16 @@ object ThumbnailHelper {
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         val bytes = input.readBytes()
                         bitmap = decodeSampledBitmapFromBytes(bytes, 512, 512)
-                    }
+                    } ?: Log.w(TAG, "openInputStream null for song ${song.id} artworkUri=${song.artworkUri}")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to load album art from artworkUri for song ${song.id}", e)
+                    Log.e(TAG, "Failed to load album art from artworkUri for song ${song.id}", e)
                 }
             }
 
-            val original = bitmap ?: return emptyList()
+            val original = bitmap ?: run {
+                Log.d(TAG, "No artwork source found for song ${song.id}")
+                return emptyList()
+            }
 
             val square = if (original.width == original.height) original else {
                 val size = minOf(original.width, original.height)
@@ -139,26 +176,28 @@ object ThumbnailHelper {
 
             if (!file128.exists()) {
                 val scaled128 = square.scale(128, 128)
-                scaled128.compress(format, 80, FileOutputStream(file128))
+                val ok = writeBitmapAtomically(scaled128, file128, format, 80)
                 if (scaled128 != square) scaled128.recycle()
+                if (ok) {
+                    Log.d(TAG, "Wrote song_${song.id}_128.webp (${file128.length()} bytes)")
+                }
             }
-            if (file128.exists()) {
-                successSizes.add(128)
-            }
+            if (file128.exists() && file128.length() > 0) successSizes.add(128)
 
             if (!file256.exists()) {
                 val scaled256 = square.scale(256, 256)
-                scaled256.compress(format, 80, FileOutputStream(file256))
+                val ok = writeBitmapAtomically(scaled256, file256, format, 80)
                 if (scaled256 != square) scaled256.recycle()
+                if (ok) {
+                    Log.d(TAG, "Wrote song_${song.id}_256.webp (${file256.length()} bytes)")
+                }
             }
-            if (file256.exists()) {
-                successSizes.add(256)
-            }
+            if (file256.exists() && file256.length() > 0) successSizes.add(256)
 
             if (square != original) square.recycle()
             original.recycle()
         } catch (e: Exception) {
-            Log.w(TAG, "Webp generation failed for song ${song.id}", e)
+            Log.e(TAG, "Webp generation failed for song ${song.id}", e)
         }
         return successSizes
     }

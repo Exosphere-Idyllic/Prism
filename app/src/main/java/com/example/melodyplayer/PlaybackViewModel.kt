@@ -60,6 +60,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
+    private var shiftWindowJob: Job? = null
     private var playerListener: Player.Listener? = null
 
     private val _currentSongColor = MutableStateFlow<Int?>(null)
@@ -90,6 +91,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private fun updateControllerMediaItems(
         controller: MediaController,
         songs: List<Song>,
+        currentSong: Song? = null,
         onComplete: () -> Unit = {}
     ) {
         if (controllerSongs == songs && controller.mediaItemCount > 0) {
@@ -98,8 +100,16 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         }
         controllerSongs = songs
 
+        // Only the current song needs artwork immediately (notification, mini-player).
+        // All other items in the window get null artwork to avoid a 50-item decode burst.
+        val currentSongId = currentSong?.id
+
         viewModelScope.launch(Dispatchers.Default) {
             val mediaItems = songs.map { song ->
+                val artworkUri = if (song.id == currentSongId && song.artworkUri.isNotEmpty())
+                    song.artworkUri.toUri()
+                else
+                    null
                 MediaItem.Builder()
                     .setMediaId(song.id)
                     .setUri(song.mediaUri.toUri())
@@ -107,7 +117,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         MediaMetadata.Builder()
                             .setTitle(song.title)
                             .setArtist(song.artist)
-                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) song.artworkUri.toUri() else null)
+                            .setArtworkUri(artworkUri)
                             .build()
                     )
                     .build()
@@ -195,14 +205,27 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private fun shiftWindow(controller: MediaController, currentSong: Song) {
         val playlist = activePlaylist
         if (playlist.isEmpty()) return
-        
+
         val (windowSongs, windowIndex) = buildPlaybackWindow(currentSong, playlist)
         if (controllerSongs == windowSongs) return
-        
+
+        // Cancel any in-flight shift that hasn't run yet (debounce for rapid skips).
+        shiftWindowJob?.cancel()
         controllerSongs = windowSongs
-        
-        viewModelScope.launch(Dispatchers.Default) {
+
+        // Only the current song needs artwork immediately; the rest carry null to
+        // avoid a ~50-item artwork-decode burst on every window slide.
+        val currentSongId = currentSong.id
+
+        shiftWindowJob = viewModelScope.launch(Dispatchers.Default) {
+            // Absorb rapid consecutive transitions before doing any real work.
+            delay(300)
+
             val mediaItems = windowSongs.map { song ->
+                val artworkUri = if (song.id == currentSongId && song.artworkUri.isNotEmpty())
+                    song.artworkUri.toUri()
+                else
+                    null
                 MediaItem.Builder()
                     .setMediaId(song.id)
                     .setUri(song.mediaUri.toUri())
@@ -210,7 +233,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                         MediaMetadata.Builder()
                             .setTitle(song.title)
                             .setArtist(song.artist)
-                            .setArtworkUri(if (song.artworkUri.isNotEmpty()) song.artworkUri.toUri() else null)
+                            .setArtworkUri(artworkUri)
                             .build()
                     )
                     .build()
@@ -244,7 +267,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             activePlaylist = listToUse
 
             val (windowSongs, windowIndex) = buildPlaybackWindow(song, listToUse)
-            updateControllerMediaItems(controller, windowSongs) {
+            updateControllerMediaItems(controller, windowSongs, currentSong = song) {
                 controller.seekTo(windowIndex, 0)
                 controller.play()
             }
@@ -284,6 +307,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         playerListener?.let { mediaController?.removeListener(it) }
         controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
+        shiftWindowJob?.cancel()
     }
 }
 

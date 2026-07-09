@@ -449,7 +449,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 val albumId = request.albumId
                 val file128 = ThumbnailManager.getAlbumThumbnailFile(app, albumId, 128)
                 val file256 = ThumbnailManager.getAlbumThumbnailFile(app, albumId, 256)
-                if (!file128.exists() || !file256.exists()) {
+                val disk128Ok = file128.exists() && file128.length() > 0
+                val disk256Ok = file256.exists() && file256.length() > 0
+                if (!disk128Ok || !disk256Ok) {
                     val sizes = ThumbnailHelper.generateWebpFromUri(app, request.artworkUri, file128, file256, albumId)
                     if (sizes.contains(128)) {
                         addAlbum128(albumId)
@@ -468,15 +470,17 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                         }
                     }
                 } else {
-                    if (file128.exists()) addAlbum128(albumId)
-                    if (file256.exists()) addAlbum256(albumId)
+                    if (disk128Ok) addAlbum128(albumId)
+                    if (disk256Ok) addAlbum256(albumId)
                 }
             }
             is ThumbnailRequest.SongRequest -> {
                 val song = request.song
                 val file128 = ThumbnailManager.getSongThumbnailFile(app, song.id, 128)
                 val file256 = ThumbnailManager.getSongThumbnailFile(app, song.id, 256)
-                if (!file128.exists() || !file256.exists()) {
+                val disk128Ok = file128.exists() && file128.length() > 0
+                val disk256Ok = file256.exists() && file256.length() > 0
+                if (!disk128Ok || !disk256Ok) {
                     val sizes = ThumbnailHelper.generateSongWebp(app, song, file128, file256)
                     if (sizes.contains(128)) {
                         addSong128(song.id)
@@ -495,8 +499,8 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                         }
                     }
                 } else {
-                    if (file128.exists()) addSong128(song.id)
-                    if (file256.exists()) addSong256(song.id)
+                    if (disk128Ok) addSong128(song.id)
+                    if (disk256Ok) addSong256(song.id)
                 }
             }
         }

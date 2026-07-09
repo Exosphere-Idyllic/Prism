@@ -2,13 +2,13 @@ package com.example.melodyplayer.data
 
 import android.content.Context
 import android.os.Process
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Background WorkManager task that pre-generates WebP thumbnails for every song
@@ -24,6 +24,7 @@ import java.io.File
 class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     companion object {
+        private const val TAG = "ThumbnailWorker"
         private const val CHUNK_SIZE = 25
     }
 
@@ -42,6 +43,8 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val allSongs = songDao.getSongThumbnailInfo()
         val cached = thumbnailCacheDao.getAllKeys().toSet()
 
+        Log.d(TAG, "Starting: ${allSongs.size} songs, ${cached.size} already cached")
+
         val uniqueAlbums = allSongs
             .filter { it.albumId > 0 && it.artworkUri.isNotEmpty() }
             .associateBy { it.albumId }
@@ -55,6 +58,8 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 (!cached.contains("song_${song.id}_128") || !cached.contains("song_${song.id}_256"))
         }
 
+        Log.d(TAG, "Missing: ${missingAlbums.size} albums, ${missingSongs.size} songs")
+
         val semaphore = Semaphore(2)
         val newEntries = mutableListOf<ThumbnailCacheEntry>()
 
@@ -63,21 +68,23 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 val toInsert = ArrayList(newEntries)
                 newEntries.clear()
                 thumbnailCacheDao.insertAll(toInsert)
+                Log.d(TAG, "Flushed ${toInsert.size} cache entries to Room")
             }
         }
 
-        missingAlbums.forEach { (albumId, song) ->
+        // Use explicit `for` loop so the suspend function `withPermit` is called
+        // correctly in a suspendable context (Map.forEach {} with a suspend lambda
+        // compiles but runs the semaphore logic in a blocking manner).
+        for ((albumId, song) in missingAlbums) {
             semaphore.withPermit {
                 val file128 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 128)
                 val file256 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 256)
 
-                if (file128.exists() && file256.exists()) {
-                    newEntries.add(
-                        ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
-                    )
-                    newEntries.add(
-                        ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
-                    )
+                if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
+                    // Files already on disk but not registered in Room — add them.
+                    newEntries.add(ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128))
+                    newEntries.add(ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256))
+                    Log.d(TAG, "Album $albumId already on disk, registering in Room")
                 } else {
                     val sizes = ThumbnailHelper.generateWebpFromUri(
                         applicationContext, song.artworkUri, file128, file256, albumId
@@ -88,23 +95,24 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
                     if (sizes.contains(256)) newEntries.add(
                         ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
                     )
+                    if (sizes.isEmpty()) {
+                        Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
+                    }
                 }
                 checkFlushEntries()
             }
         }
 
-        missingSongs.forEach { songInfo ->
+        for (songInfo in missingSongs) {
             semaphore.withPermit {
                 val file128 = ThumbnailManager.getSongThumbnailFile(applicationContext, songInfo.id, 128)
                 val file256 = ThumbnailManager.getSongThumbnailFile(applicationContext, songInfo.id, 256)
 
-                if (file128.exists() && file256.exists()) {
-                    newEntries.add(
-                        ThumbnailCacheEntry("song_${songInfo.id}_128", songInfo.id, "song", 128)
-                    )
-                    newEntries.add(
-                        ThumbnailCacheEntry("song_${songInfo.id}_256", songInfo.id, "song", 256)
-                    )
+                if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
+                    // Files already on disk but not in Room — register them.
+                    newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_128", songInfo.id, "song", 128))
+                    newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_256", songInfo.id, "song", 256))
+                    Log.d(TAG, "Song ${songInfo.id} already on disk, registering in Room")
                 } else {
                     val song = Song(
                         id = songInfo.id,
@@ -132,6 +140,7 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
         checkFlushEntries(force = true)
 
+        Log.d(TAG, "Done. Total new entries persisted to Room: ${newEntries.size} (plus any flushed mid-run)")
         Result.success()
     }
 }
