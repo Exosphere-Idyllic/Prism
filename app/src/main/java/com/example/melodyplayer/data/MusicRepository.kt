@@ -12,6 +12,7 @@ import androidx.core.net.toUri
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -506,7 +507,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     fun getSongsFlow(query: String): Flow<PagingData<Song>> {
         return Pager(PagingConfig(pageSize = 30, enablePlaceholders = false)) {
             if (query.isEmpty()) songDao.getAllSongsPaging() else songDao.searchSongsPaging("%$query%")
-        }.flow
+        }.flow.cachedIn(scope)
     }
 
     fun getAlbumsFlow(query: String) =

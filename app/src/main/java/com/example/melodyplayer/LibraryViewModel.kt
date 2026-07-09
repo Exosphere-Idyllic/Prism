@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -62,6 +64,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val playlistsFlow = repository.playlistsFlow
     val playlistsWithCountsFlow = repository.playlistsWithCountsFlow
     val favoriteSongIds = repository.getFavoriteSongIds()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     init {
         repository.startObserving()
