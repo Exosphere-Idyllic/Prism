@@ -36,6 +36,8 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
             // Non-fatal
         }
 
+        Log.d(TAG, "doWork() started on thread=${Thread.currentThread().name}")
+
         val database = AppDatabase.getDatabase(applicationContext)
         val songDao = database.songDao()
         val thumbnailCacheDao = database.thumbnailCacheDao()
@@ -133,6 +135,9 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
                     if (sizes.contains(256)) newEntries.add(
                         ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
                     )
+                    if (sizes.isEmpty()) {
+                        Log.w(TAG, "Failed to generate thumbnail for songId=${song.id} mediaUri=${songInfo.mediaUri}")
+                    }
                 }
                 checkFlushEntries()
             }

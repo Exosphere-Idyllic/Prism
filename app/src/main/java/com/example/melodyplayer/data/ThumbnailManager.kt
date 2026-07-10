@@ -3,6 +3,7 @@ package com.example.melodyplayer.data
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.io.IOException
 
 /**
  * Centralized thumbnail storage location management.
@@ -21,10 +22,10 @@ object ThumbnailManager {
     private var cachedDir: File? = null
 
     /**
-     * Get the persistent thumbnail directory.
-     * Uses app-internal filesDir — always available, no permissions needed.
-     * The result is cached so subsequent calls skip filesystem checks.
+     * Returns the persistent thumbnail directory, creating it if necessary.
+     * @throws IOException if the directory cannot be created.
      */
+    @Throws(IOException::class)
     fun getThumbnailDir(context: Context): File {
         cachedDir?.let { return it }
 
@@ -32,9 +33,10 @@ object ThumbnailManager {
             cachedDir?.let { return it }
 
             val dir = File(context.filesDir, THUMBNAIL_SUBDIR)
-            if (!dir.exists()) {
-                dir.mkdirs()
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw IOException("Failed to create thumbnail directory: ${dir.absolutePath}")
             }
+            Log.d(TAG, "Thumbnail directory ready: ${dir.absolutePath}")
 
             // One-time migration from old external storage location
             migrateFromOldLocation(context, dir)

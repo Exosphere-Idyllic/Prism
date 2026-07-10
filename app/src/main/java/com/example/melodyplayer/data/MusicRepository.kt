@@ -228,7 +228,7 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                         .build()
                     WorkManager.getInstance(app).enqueueUniqueWork(
                         "thumbnail_pre_generation",
-                        ExistingWorkPolicy.KEEP,
+                        ExistingWorkPolicy.REPLACE,
                         workRequest
                     )
                 } catch (e: Exception) {
