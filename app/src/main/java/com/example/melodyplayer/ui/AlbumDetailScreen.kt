@@ -29,6 +29,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 
 private val NoOpSongAction: (Song) -> Unit = { _ -> }
@@ -47,9 +48,7 @@ fun AlbumDetailScreen(
     val rawSongs by remember(albumId) { libraryViewModel.getSongsByAlbum(albumId) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val songs = remember(rawSongs) { rawSongs.toImmutableList() }
-    val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
-    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
+    val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(persistentSetOf())
     val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
 
@@ -95,7 +94,6 @@ fun AlbumDetailScreen(
                     .padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val hasWebp = albumThumbnail256Ids.contains(albumId)
                 Box(
                     modifier = Modifier
                         .size(160.dp)
@@ -106,7 +104,6 @@ fun AlbumDetailScreen(
                         albumId = albumId,
                         coverUri = songs.firstOrNull()?.artworkUri ?: "",
                         contentDescription = "Carátula del álbum",
-                        hasWebp = hasWebp,
                         size = 256,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -153,14 +150,12 @@ fun AlbumDetailScreen(
             ) {
                 items(songs, key = { it.id }) { song ->
                     val isFavorite = favoriteSongIds.contains(song.id)
-                    val hasWebp = songThumbnail128Ids.contains(song.id)
 
                     SongListItemWrapper(
                         song = song,
                         currentSongId = currentSong?.id,
                         isPlaying = isPlaying,
                         isFavorite = isFavorite,
-                        hasWebp = hasWebp,
                         onSongSelected = onPlaySong,
                         onFavoriteToggle = onToggleFav,
                         onAddToPlaylist = NoOpSongAction

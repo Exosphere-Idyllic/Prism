@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,7 +36,6 @@ fun MiniPlayer(
     song: Song,
     isPlaying: Boolean,
     progressStateFlow: StateFlow<ProgressState>,
-    hasWebp: Boolean,
     onPlayPauseToggle: () -> Unit,
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier
@@ -43,6 +43,7 @@ fun MiniPlayer(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .height(66.dp)
             .shadow(24.dp, RoundedCornerShape(20.dp))
             .clickable { onOpenPlayer() },
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E30)),
@@ -60,7 +61,6 @@ fun MiniPlayer(
                 SongArtwork(
                     song = song,
                     contentDescription = "Mini player art",
-                    hasWebp = hasWebp,
                     size = 128,
                     crossfade = false,
                     iconSize = 20.dp,
@@ -69,6 +69,7 @@ fun MiniPlayer(
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color.White.copy(alpha = 0.06f))
                 )
+
 
                 Spacer(modifier = Modifier.width(12.dp))
 
@@ -113,26 +114,30 @@ fun MiniPlayer(
 @Composable
 fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
     val progress by progressStateFlow.collectAsStateWithLifecycle(ProgressState())
-    val progressFraction = if (progress.duration > 0) {
-        (progress.currentPosition.toFloat() / progress.duration.toFloat()).coerceIn(0f, 1f)
-    } else 0f
+
+    // Read progress fraction inside drawBehind so only the *draw* phase is invalidated
+    // on each 250 ms tick — the parent MiniPlayer composition is NOT re-executed.
+    val gradientColors = remember {
+        listOf(Color(0xFF818CF8), Color(0xFF6366F1))
+    }
+    val trackColor = Color.White.copy(alpha = 0.08f)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(2.dp)
-            .background(Color.White.copy(alpha = 0.08f))
-    ) {
-        val progressBrush = remember {
-            Brush.horizontalGradient(
-                colors = listOf(Color(0xFF818CF8), Color(0xFF6366F1))
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(progressFraction)
-                .fillMaxHeight()
-                .background(brush = progressBrush)
-        )
-    }
+            .drawBehind {
+                // Track background
+                drawRect(color = trackColor)
+                // Progress fill — fraction is read here (draw scope), not in composition
+                val fraction = if (progress.duration > 0) {
+                    (progress.currentPosition.toFloat() / progress.duration.toFloat())
+                        .coerceIn(0f, 1f)
+                } else 0f
+                drawRect(
+                    brush = Brush.horizontalGradient(gradientColors),
+                    size = androidx.compose.ui.geometry.Size(size.width * fraction, size.height)
+                )
+            }
+    )
 }

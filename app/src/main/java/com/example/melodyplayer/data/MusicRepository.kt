@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,11 +25,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import android.content.Context
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -37,6 +40,9 @@ import java.io.File
 import kotlin.time.Duration.Companion.milliseconds
 
 class MusicRepository(private val app: Application, private val scope: CoroutineScope) {
+
+    /** Exposed so [ArtworkInterceptor] can resolve thumbnail file paths. */
+    val appContext: android.content.Context get() = app
 
     companion object {
         private const val TAG = "MusicRepository"
@@ -59,6 +65,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     // Each set holds IDs for which a WebP file is confirmed to exist.
     // StateFlow emissions are conflated, so rapid bulk inserts produce at most
     // one recomposition per frame rather than one per thumbnail write.
+    private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
+    val allSongs = _allSongs.asStateFlow()
+
     private val _albumThumbnail128Ids = MutableStateFlow<Set<Long>>(emptySet())
     val albumThumbnail128Ids = _albumThumbnail128Ids.asStateFlow()
 
@@ -72,12 +81,25 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     val songThumbnail256Ids = _songThumbnail256Ids.asStateFlow()
 
     // ── Internal helpers ──────────────────────────────────────────────────────
+    // Batched thumbnail ID accumulator: instead of emitting a new Set per thumbnail
+    // (which causes one full recomposition of SongListScreen per thumbnail written),
+    // we batch pending IDs in an unlimited Channel and drain them with a 150ms debounce.
+    // This means rapid scroll that generates N thumbnails in 150ms produces a SINGLE
+    // recomposition instead of N.
+    private sealed class ThumbnailIdUpdate {
+        data class Album128(val id: Long) : ThumbnailIdUpdate()
+        data class Album256(val id: Long) : ThumbnailIdUpdate()
+        data class Song128(val id: String) : ThumbnailIdUpdate()
+        data class Song256(val id: String) : ThumbnailIdUpdate()
+    }
+
+    private val thumbnailIdChannel = Channel<ThumbnailIdUpdate>(Channel.UNLIMITED)
+
     // Guards: only emit a new Set if the ID wasn't already present.
-    // This avoids redundant StateFlow emissions and recomposition triggers.
-    private fun addAlbum128(albumId: Long) = _albumThumbnail128Ids.update { set -> if (albumId in set) set else set + albumId }
-    private fun addAlbum256(albumId: Long) = _albumThumbnail256Ids.update { set -> if (albumId in set) set else set + albumId }
-    private fun addSong128(songId: String) = _songThumbnail128Ids.update { set -> if (songId in set) set else set + songId }
-    private fun addSong256(songId: String) = _songThumbnail256Ids.update { set -> if (songId in set) set else set + songId }
+    private fun addAlbum128(albumId: Long) { thumbnailIdChannel.trySend(ThumbnailIdUpdate.Album128(albumId)) }
+    private fun addAlbum256(albumId: Long) { thumbnailIdChannel.trySend(ThumbnailIdUpdate.Album256(albumId)) }
+    private fun addSong128(songId: String) { thumbnailIdChannel.trySend(ThumbnailIdUpdate.Song128(songId)) }
+    private fun addSong256(songId: String) { thumbnailIdChannel.trySend(ThumbnailIdUpdate.Song256(songId)) }
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -108,9 +130,38 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 }
         }
 
+        // Batched StateFlow updater: drains thumbnailIdChannel and applies accumulated
+        // updates to the four StateFlows in one shot per batch window (150ms debounce).
+        // This converts N thumbnail completions → 1 recomposition instead of N.
+        scope.launch {
+            @OptIn(kotlinx.coroutines.FlowPreview::class)
+            thumbnailIdChannel
+                .receiveAsFlow()
+                .debounce(150.milliseconds)
+                .collect { triggering ->
+                    // Start with the item that triggered the debounce (already consumed by flow)
+                    val pending = mutableListOf<ThumbnailIdUpdate>(triggering)
+                    // Drain any additional items that accumulated in the channel
+                    var item: ThumbnailIdUpdate? = thumbnailIdChannel.tryReceive().getOrNull()
+                    while (item != null) {
+                        pending.add(item)
+                        item = thumbnailIdChannel.tryReceive().getOrNull()
+                    }
+                    // Apply all accumulated updates to StateFlows in one batch
+                    val a128 = pending.filterIsInstance<ThumbnailIdUpdate.Album128>().map { it.id }.toSet()
+                    val a256 = pending.filterIsInstance<ThumbnailIdUpdate.Album256>().map { it.id }.toSet()
+                    val s128 = pending.filterIsInstance<ThumbnailIdUpdate.Song128>().map { it.id }.toSet()
+                    val s256 = pending.filterIsInstance<ThumbnailIdUpdate.Song256>().map { it.id }.toSet()
+                    if (a128.isNotEmpty()) _albumThumbnail128Ids.update { it + a128 }
+                    if (a256.isNotEmpty()) _albumThumbnail256Ids.update { it + a256 }
+                    if (s128.isNotEmpty()) _songThumbnail128Ids.update { it + s128 }
+                    if (s256.isNotEmpty()) _songThumbnail256Ids.update { it + s256 }
+                }
+        }
+
         // HIGH-priority thumbnail worker (visible items, current song)
         scope.launch(Dispatchers.IO) {
-            ThumbnailQueue.highFlow().collect { request ->
+            ThumbnailQueue.activeRequestFlow().collect { request ->
                 thumbnailSemaphore.withPermit { processThumbnailRequest(request) }
             }
         }
@@ -157,6 +208,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
         scanJob?.cancel()
         scanJob = scope.launch(Dispatchers.IO) {
             _isLoading.value = true
+
+            // Load existing songs into memory cache instantly at startup
+            _allSongs.value = songDao.getAllSongs()
 
             // 1. Load thumbnail index from Room into the new StateFlows
             loadThumbnailIndexFromDb()
@@ -218,6 +272,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
 
             // 7. Finalize — use COUNT query instead of loading all songs
             _totalSongsCount.value = songDao.getSongCount()
+            if (toUpsert.isNotEmpty() || toDelete.isNotEmpty()) {
+                _allSongs.value = songDao.getAllSongs()
+            }
             _isLoading.value = false
 
             // 8. Trigger WorkManager for background thumbnail pre-generation
@@ -337,63 +394,55 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
             songsToDelete.map { it.artist }
         ).toSet()
 
-        for (albumId in affectedAlbumIds) {
-            if (albumId <= 0L) continue
-            val albumSongs = songDao.getSongsByAlbumSync(albumId)
-            if (albumSongs.isEmpty()) {
-                albumDao.deleteById(albumId)
-            } else {
-                val sample = albumSongs.first()
-                albumDao.insert(Album(
-                    id = albumId,
-                    albumName = sample.album,
-                    artist = sample.artist,
-                    coverPath = sample.artworkUri,
-                    songCount = albumSongs.size
-                ))
+        val activeAlbumIds = affectedAlbumIds.filter { it > 0L }
+        if (activeAlbumIds.isNotEmpty()) {
+            val allAlbumSongs = songDao.getSongsByAlbumIdsSync(activeAlbumIds)
+            val songsByAlbum = allAlbumSongs.groupBy { it.albumId }
+            for (albumId in activeAlbumIds) {
+                val albumSongs = songsByAlbum[albumId] ?: emptyList()
+                if (albumSongs.isEmpty()) {
+                    albumDao.deleteById(albumId)
+                } else {
+                    val sample = albumSongs.first()
+                    albumDao.insert(Album(
+                        id = albumId,
+                        albumName = sample.album,
+                        artist = sample.artist,
+                        coverPath = sample.artworkUri,
+                        songCount = albumSongs.size
+                    ))
+                }
             }
         }
 
-        for (artistName in affectedArtists) {
-            if (artistName.isEmpty()) continue
-            val artistSongs = songDao.getSongsByArtistSync(artistName)
-            if (artistSongs.isEmpty()) {
-                artistDao.deleteById(artistName.hashCode().toLong())
-            } else {
-                val distinctAlbumCount = artistSongs.map { it.albumId }.distinct().size
-                artistDao.insert(Artist(
-                    id = artistName.hashCode().toLong(),
-                    name = artistName,
-                    songCount = artistSongs.size,
-                    albumCount = distinctAlbumCount
-                ))
+        val activeArtists = affectedArtists.filter { it.isNotEmpty() }
+        if (activeArtists.isNotEmpty()) {
+            val allArtistSongs = songDao.getSongsByArtistsSync(activeArtists)
+            val songsByArtist = allArtistSongs.groupBy { it.artist }
+            for (artistName in activeArtists) {
+                val artistSongs = songsByArtist[artistName] ?: emptyList()
+                if (artistSongs.isEmpty()) {
+                    artistDao.deleteById(artistName.hashCode().toLong())
+                } else {
+                    val distinctAlbumCount = artistSongs.map { it.albumId }.distinct().size
+                    artistDao.insert(Artist(
+                        id = artistName.hashCode().toLong(),
+                        name = artistName,
+                        songCount = artistSongs.size,
+                        albumCount = distinctAlbumCount
+                    ))
+                }
             }
         }
     }
 
     private suspend fun updateAlbumsAndArtists() {
-        val allSongs = songDao.getAllSongs()
-
-        val albums = allSongs.groupBy { it.albumId }.map { (albumId, songs) ->
-            val sample = songs.first()
-            Album(
-                id = albumId,
-                albumName = sample.album,
-                artist = sample.artist,
-                coverPath = sample.artworkUri,
-                songCount = songs.size
-            )
-        }
+        val albums = songDao.getAggregatedAlbums()
         albumDao.deleteAll()
         albumDao.insertAll(albums)
 
-        val artists = allSongs.groupBy { it.artist }.map { (name, songs) ->
-            Artist(
-                id = name.hashCode().toLong(),
-                name = name,
-                songCount = songs.size,
-                albumCount = songs.map { it.albumId }.distinct().size
-            )
+        val artists = songDao.getAggregatedArtists().map {
+            it.copy(id = it.name.hashCode().toLong())
         }
         artistDao.deleteAll()
         artistDao.insertAll(artists)
@@ -440,10 +489,19 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     }
 
     fun requestSongThumbnail(song: Song) {
-        ThumbnailQueue.enqueueSong(song, ThumbnailQueue.HIGH)
+        // Check disk files for existing thumbnails and add them to the StateFlow cache
+        val file128 = ThumbnailManager.getSongThumbnailFile(app, song.id, 128)
+        val file256 = ThumbnailManager.getSongThumbnailFile(app, song.id, 256)
+        val disk128Ok = file128.exists() && file128.length() > 0
+        val disk256Ok = file256.exists() && file256.length() > 0
+        if (disk128Ok) addSong128(song.id)
+        if (disk256Ok) addSong256(song.id)
     }
 
     private suspend fun processThumbnailRequest(request: ThumbnailRequest) {
+        // Already on Dispatchers.IO (called from the highFlow collector).
+        // Insert Room entries directly here — no sub-launches needed.
+        // Accumulated StateFlow ID signals are batched via thumbnailIdChannel + debounce.
         when (request) {
             is ThumbnailRequest.Album -> {
                 val albumId = request.albumId
@@ -453,55 +511,24 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
                 val disk256Ok = file256.exists() && file256.length() > 0
                 if (!disk128Ok || !disk256Ok) {
                     val sizes = ThumbnailHelper.generateWebpFromUri(app, request.artworkUri, file128, file256, albumId)
+                    val newEntries = mutableListOf<ThumbnailCacheEntry>()
                     if (sizes.contains(128)) {
                         addAlbum128(albumId)
-                        scope.launch(Dispatchers.IO) {
-                            thumbnailCacheDao.insertAll(listOf(
-                                ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
-                            ))
-                        }
+                        newEntries.add(ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128))
                     }
                     if (sizes.contains(256)) {
                         addAlbum256(albumId)
-                        scope.launch(Dispatchers.IO) {
-                            thumbnailCacheDao.insertAll(listOf(
-                                ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
-                            ))
-                        }
+                        newEntries.add(ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256))
                     }
+                    // Single batched Room insert instead of multiple fire-and-forget launches
+                    if (newEntries.isNotEmpty()) thumbnailCacheDao.insertAll(newEntries)
                 } else {
                     if (disk128Ok) addAlbum128(albumId)
                     if (disk256Ok) addAlbum256(albumId)
                 }
             }
             is ThumbnailRequest.SongRequest -> {
-                val song = request.song
-                val file128 = ThumbnailManager.getSongThumbnailFile(app, song.id, 128)
-                val file256 = ThumbnailManager.getSongThumbnailFile(app, song.id, 256)
-                val disk128Ok = file128.exists() && file128.length() > 0
-                val disk256Ok = file256.exists() && file256.length() > 0
-                if (!disk128Ok || !disk256Ok) {
-                    val sizes = ThumbnailHelper.generateSongWebp(app, song, file128, file256)
-                    if (sizes.contains(128)) {
-                        addSong128(song.id)
-                        scope.launch(Dispatchers.IO) {
-                            thumbnailCacheDao.insertAll(listOf(
-                                ThumbnailCacheEntry("song_${song.id}_128", song.id, "song", 128)
-                            ))
-                        }
-                    }
-                    if (sizes.contains(256)) {
-                        addSong256(song.id)
-                        scope.launch(Dispatchers.IO) {
-                            thumbnailCacheDao.insertAll(listOf(
-                                ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
-                            ))
-                        }
-                    }
-                } else {
-                    if (disk128Ok) addSong128(song.id)
-                    if (disk256Ok) addSong256(song.id)
-                }
+                // No-op. We no longer generate individual song thumbnails to reduce CPU/IO overhead.
             }
         }
     }
@@ -509,7 +536,13 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
     // ── Data exposure ─────────────────────────────────────────────────────────
 
     fun getSongsFlow(query: String): Flow<PagingData<Song>> {
-        return Pager(PagingConfig(pageSize = 30, enablePlaceholders = false)) {
+        return Pager(
+            config = PagingConfig(
+                pageSize = 30,
+                enablePlaceholders = false,
+                prefetchDistance = 40
+            )
+        ) {
             if (query.isEmpty()) songDao.getAllSongsPaging() else songDao.searchSongsPaging("%$query%")
         }.flow.cachedIn(scope)
     }

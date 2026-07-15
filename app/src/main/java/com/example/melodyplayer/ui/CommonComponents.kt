@@ -12,10 +12,13 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -25,15 +28,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@Composable
-fun shimmerBrush(targetValue: Float = 1000f): Brush {
-    val shimmerColors = listOf(
-        Color.White.copy(alpha = 0.03f),
-        Color.White.copy(alpha = 0.12f),
-        Color.White.copy(alpha = 0.03f)
-    )
+/**
+ * Extension modifier that paints a sweeping shimmer behind its content.
+ *
+ * The animated value is read inside [drawBehind], so Compose only invalidates
+ * the *draw* phase on every frame — avoiding a full recomposition per frame
+ * that the old composable `shimmerBrush()` caused.
+ */
+fun Modifier.shimmer(targetValue: Float = 1000f): Modifier = composed {
+    val shimmerColors = remember {
+        listOf(
+            Color.White.copy(alpha = 0.03f),
+            Color.White.copy(alpha = 0.12f),
+            Color.White.copy(alpha = 0.03f)
+        )
+    }
     val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateAnim = transition.animateFloat(
+    val translateAnim by transition.animateFloat(
         initialValue = 0f,
         targetValue = targetValue,
         animationSpec = infiniteRepeatable(
@@ -42,11 +53,14 @@ fun shimmerBrush(targetValue: Float = 1000f): Brush {
         ),
         label = "shimmerTranslation"
     )
-    return Brush.linearGradient(
-        colors = shimmerColors,
-        start = Offset.Zero,
-        end = Offset(x = translateAnim.value, y = translateAnim.value)
-    )
+    drawBehind {
+        val brush = Brush.linearGradient(
+            colors = shimmerColors,
+            start = Offset.Zero,
+            end = Offset(x = translateAnim, y = translateAnim)
+        )
+        drawRect(brush = brush)
+    }
 }
 
 @Composable
@@ -95,7 +109,6 @@ fun SearchBar(
 
 @Composable
 fun SongListShimmer(modifier: Modifier = Modifier) {
-    val brush = shimmerBrush()
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -113,7 +126,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(brush)
+                        .shimmer()
                 )
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -124,7 +137,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                             .fillMaxWidth(0.6f)
                             .height(14.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(brush)
+                            .shimmer()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Box(
@@ -132,7 +145,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                             .fillMaxWidth(0.35f)
                             .height(10.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(brush)
+                            .shimmer()
                     )
                 }
             }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -32,6 +34,10 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 
 
 enum class LibraryTab(val title: String) {
@@ -56,11 +62,28 @@ fun SongListScreen(
     val searchQuery by libraryViewModel.searchQuery.collectAsStateWithLifecycle()
     val isLoading by libraryViewModel.isLoading.collectAsStateWithLifecycle()
     val totalSongs by libraryViewModel.totalSongsCount.collectAsStateWithLifecycle()
-    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
-    val albumThumbnail256Ids by libraryViewModel.albumThumbnail256Ids.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // ── Hoist all tab data above the `when` block so state is preserved ────────
+    // Collecting flows *inside* `when(selectedTab)` was the main cause of tab-switch
+    // jank: every switch cancelled and re-subscribed the Room/Paging queries, causing
+    // a loading flash and a fresh full recomposition.  Collecting here keeps all data
+    // in memory regardless of which tab is visible.
+    val lazySongs = libraryViewModel.songsFlow.collectAsLazyPagingItems()
+    val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(persistentSetOf())
+    val albums by libraryViewModel.albumsFlow.collectAsStateWithLifecycle(persistentListOf())
+    val artists by libraryViewModel.artistsFlow.collectAsStateWithLifecycle(persistentListOf())
+    val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(persistentListOf())
+
+    // ── Hoist list states above `when` to preserve scroll position on tab switches ─
+    val songsListState = rememberLazyListState()
+    val albumsGridState = rememberLazyGridState()
+    val playlistsListState = rememberLazyListState()
+    val artistsListState = rememberLazyListState()
+
     var selectedTab by remember { mutableStateOf(LibraryTab.Biblioteca) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
 
     val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_AUDIO
@@ -91,6 +114,21 @@ fun SongListScreen(
             )
         )
     }
+
+    // Stable lambdas hoisted outside conditional blocks
+    val onSongSelected: (Song) -> Unit = remember(playbackViewModel, onNavigateToPlayer) {
+        { song: Song ->
+            playbackViewModel.playSong(song)
+            onNavigateToPlayer()
+        }
+    }
+    val onFavoriteToggle = remember(libraryViewModel) {
+        { song: Song -> libraryViewModel.toggleFavorite(song) }
+    }
+    val onAddToPlaylist = remember {
+        { song: Song -> songToAddToPlaylist = song }
+    }
+    val onPlayPauseToggle = remember(playbackViewModel) { { playbackViewModel.togglePlayPause() } }
 
     Box(
         modifier = modifier
@@ -185,74 +223,42 @@ fun SongListScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     when (selectedTab) {
                         LibraryTab.Biblioteca -> {
-                            val lazySongs = libraryViewModel.songsFlow.collectAsLazyPagingItems()
-                            val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
-
-                            if (lazySongs.itemCount == 0 && lazySongs.loadState.refresh is androidx.paging.LoadState.Loading) {
+                            val isSongsLoading = (lazySongs.loadState.refresh is androidx.paging.LoadState.Loading) || (isLoading && lazySongs.itemCount == 0)
+                            if (isSongsLoading) {
                                 SongListShimmer(modifier = Modifier.fillMaxSize())
-                            } else if (lazySongs.itemCount == 0 && !isLoading) {
+                            } else if (lazySongs.itemCount == 0) {
                                 if (searchQuery.isEmpty()) {
                                     EmptyLibrary(modifier = Modifier.fillMaxSize())
                                 } else {
                                     NoSearchResults(query = searchQuery, modifier = Modifier.fillMaxSize())
                                 }
                             } else {
-                                var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
-                                
-                                val onSongSelected: (Song) -> Unit = remember(playbackViewModel, onNavigateToPlayer) {
-                                    { song: Song ->
-                                        playbackViewModel.playSong(song)
-                                        onNavigateToPlayer()
-                                    }
-                                }
-                                val onFavoriteToggle = remember(libraryViewModel) {
-                                    { song: Song -> libraryViewModel.toggleFavorite(song) }
-                                }
-                                val onAddToPlaylist = remember {
-                                    { song: Song -> songToAddToPlaylist = song }
-                                }
-
                                 SongList(
                                     songs = lazySongs,
                                     currentSong = currentSong,
                                     isPlaying = isPlaying,
                                     favoriteSongIds = favoriteSongIds,
-                                    songThumbnail128Ids = songThumbnail128Ids,
                                     onSongSelected = onSongSelected,
                                     onFavoriteToggle = onFavoriteToggle,
                                     onAddToPlaylist = onAddToPlaylist,
-                                    libraryViewModel = libraryViewModel
+                                    libraryViewModel = libraryViewModel,
+                                    listState = songsListState
                                 )
-
-                                songToAddToPlaylist?.let { song ->
-                                    AddToPlaylistDialog(
-                                        song = song,
-                                        libraryViewModel = libraryViewModel,
-                                        onDismiss = { songToAddToPlaylist = null }
-                                    )
-                                }
                             }
                         }
                         LibraryTab.Albumes -> {
-                            val albums by libraryViewModel.albumsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-                            if (albums.isEmpty() && isLoading) {
+                            val isAlbumsLoading = isLoading && albums.isEmpty()
+                            if (isAlbumsLoading) {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator(color = Color(0xFF6366F1))
                                 }
                             } else if (albums.isEmpty()) {
                                 EmptyLibrary(modifier = Modifier.fillMaxSize())
                             } else {
-                                LaunchedEffect(albums.size) {
-                                    val limit = minOf(20, albums.size)
-                                    for (i in 0 until limit) {
-                                        val album = albums[i]
-                                        libraryViewModel.requestThumbnail(album.id, album.coverPath)
-                                    }
-                                }
-
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(2),
-                                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                                    state = albumsGridState,
+                                    contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 100.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier.fillMaxSize()
@@ -260,19 +266,13 @@ fun SongListScreen(
                                     items(albums, key = { it.id }) { album ->
                                         AlbumGridItem(
                                             album = album,
-                                            hasWebp = albumThumbnail256Ids.contains(album.id),
                                             onClick = { onNavigateToAlbum(album.id, album.albumName) }
                                         )
                                     }
-                                    item { Spacer(modifier = Modifier.height(96.dp)) }
-                                    item { Spacer(modifier = Modifier.height(96.dp)) }
                                 }
                             }
                         }
                         LibraryTab.Playlists -> {
-                            val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(emptyList())
-                            var showCreateDialog by remember { mutableStateOf(false) }
-
                             Column(modifier = Modifier.fillMaxSize()) {
                                 Row(
                                     modifier = Modifier
@@ -295,7 +295,8 @@ fun SongListScreen(
                                     EmptyLibrary(modifier = Modifier.weight(1f).fillMaxWidth())
                                 } else {
                                     LazyColumn(
-                                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                                        state = playlistsListState,
+                                        contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 100.dp),
                                         verticalArrangement = Arrangement.spacedBy(12.dp),
                                         modifier = Modifier.weight(1f).fillMaxWidth()
                                     ) {
@@ -306,21 +307,13 @@ fun SongListScreen(
                                                 onDelete = { libraryViewModel.deletePlaylist(playlist.id) }
                                             )
                                         }
-                                        item { Spacer(modifier = Modifier.height(96.dp)) }
                                     }
                                 }
                             }
-
-                            if (showCreateDialog) {
-                                CreatePlaylistDialog(
-                                    onCreate = { libraryViewModel.createPlaylist(it) },
-                                    onDismiss = { showCreateDialog = false }
-                                )
-                            }
                         }
                         LibraryTab.Artistas -> {
-                            val artists by libraryViewModel.artistsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-                            if (artists.isEmpty() && isLoading) {
+                            val isArtistsLoading = isLoading && artists.isEmpty()
+                            if (isArtistsLoading) {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator(color = Color(0xFF6366F1))
                                 }
@@ -328,14 +321,14 @@ fun SongListScreen(
                                 EmptyLibrary(modifier = Modifier.fillMaxSize())
                             } else {
                                 LazyColumn(
-                                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                                    state = artistsListState,
+                                    contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 100.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
                                     items(artists, key = { it.id }) { artist ->
                                         ArtistListItem(artist = artist, onClick = { onNavigateToArtist(artist.name) })
                                     }
-                                    item { Spacer(modifier = Modifier.height(96.dp)) }
                                 }
                             }
                         }
@@ -347,19 +340,31 @@ fun SongListScreen(
         // ── Mini Player (bottom) ─────────────────
         val miniPlayerSong = currentSong
         if (miniPlayerSong != null) {
-            val onPlayPauseToggle = remember(playbackViewModel) { { playbackViewModel.togglePlayPause() } }
-            val hasWebp = songThumbnail128Ids.contains(miniPlayerSong.id)
             MiniPlayer(
                 song = miniPlayerSong,
                 isPlaying = isPlaying,
                 progressStateFlow = playbackViewModel.progressState,
-                hasWebp = hasWebp,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onOpenPlayer = onNavigateToPlayer,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        }
+
+        // ── Dialogs ───────────────────────────────
+        if (showCreateDialog) {
+            CreatePlaylistDialog(
+                onCreate = { libraryViewModel.createPlaylist(it) },
+                onDismiss = { showCreateDialog = false }
+            )
+        }
+        songToAddToPlaylist?.let { song ->
+            AddToPlaylistDialog(
+                song = song,
+                libraryViewModel = libraryViewModel,
+                onDismiss = { songToAddToPlaylist = null }
             )
         }
     }

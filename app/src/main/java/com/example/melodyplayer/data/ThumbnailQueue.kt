@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
  * A priority-aware thumbnail work queue.
  *
  * Producers call [enqueueAlbum] / [enqueueSong] from any thread.
- * A HIGH-priority worker coroutine in [MusicRepository] consumes items via [highFlow].
+ * A HIGH-priority worker coroutine in [MusicRepository] consumes items via [activeRequestFlow].
  * Background library generation is delegated to [ThumbnailWorker] (WorkManager).
  *
  * Priority tiers (lower value = higher priority):
@@ -33,7 +33,7 @@ object ThumbnailQueue {
         highChannel.trySend(ThumbnailRequest.SongRequest(song, priority))
     }
 
-    fun highFlow(): Flow<ThumbnailRequest> = highChannel.receiveAsFlow()
+    fun activeRequestFlow(): Flow<ThumbnailRequest> = highChannel.receiveAsFlow()
 }
 
 sealed class ThumbnailRequest(open val priority: Int) {

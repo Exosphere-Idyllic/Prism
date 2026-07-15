@@ -18,6 +18,7 @@ import java.io.FileOutputStream
 object ThumbnailHelper {
     private const val TAG = "ThumbnailHelper"
 
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Bitmap utilities
     // ─────────────────────────────────────────────────────────────────────────
@@ -233,8 +234,24 @@ object ThumbnailHelper {
         try {
             var bitmap: Bitmap? = null
 
-            // 1. Embedded artwork via MediaMetadataRetriever — song-specific, highest fidelity
-            if (song.mediaUri.isNotEmpty()) {
+            // 1. loadThumbnail on the media URI (API 29+) — Highly optimized, hardware decoders
+            if (song.mediaUri.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                bitmap = loadThumbnailCompat(context, Uri.parse(song.mediaUri), 512)
+                if (bitmap != null) Log.d(TAG, "loadThumbnail(mediaUri) OK for song ${song.id}")
+            }
+
+            // 2. loadThumbnail on the album's Albums URI (API 29+)
+            if (bitmap == null && song.albumId > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val albumsUri = ContentUris.withAppendedId(
+                    MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI,
+                    song.albumId
+                )
+                bitmap = loadThumbnailCompat(context, albumsUri, 512)
+                if (bitmap != null) Log.d(TAG, "loadThumbnail(albumsUri) OK for song ${song.id}")
+            }
+
+            // 3. Embedded artwork via MediaMetadataRetriever — song-specific, fallback if OS thumb fails
+            if (bitmap == null && song.mediaUri.isNotEmpty()) {
                 var retriever: MediaMetadataRetriever? = null
                 try {
                     retriever = MediaMetadataRetriever()
@@ -249,22 +266,6 @@ object ThumbnailHelper {
                 } finally {
                     try { retriever?.close() } catch (_: Exception) {}
                 }
-            }
-
-            // 2. loadThumbnail on the media URI (API 29+)
-            if (bitmap == null && song.mediaUri.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                bitmap = loadThumbnailCompat(context, Uri.parse(song.mediaUri), 512)
-                if (bitmap != null) Log.d(TAG, "loadThumbnail(mediaUri) OK for song ${song.id}")
-            }
-
-            // 3. loadThumbnail on the album's Albums URI (API 29+)
-            if (bitmap == null && song.albumId > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val albumsUri = ContentUris.withAppendedId(
-                    MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI,
-                    song.albumId
-                )
-                bitmap = loadThumbnailCompat(context, albumsUri, 512)
-                if (bitmap != null) Log.d(TAG, "loadThumbnail(albumsUri) OK for song ${song.id}")
             }
 
             // 4. Legacy fallback: openInputStream on artworkUri

@@ -19,6 +19,23 @@ data class SongSyncInfo(
     val dateModified: Long
 )
 
+/**
+ * Lightweight projection for rebuilding albums and artists without loading
+ * the full [Song] entity (which includes long URIs and all fields).
+ */
+data class SongLibraryInfo(
+    val albumId: Long,
+    val album: String,
+    val artist: String,
+    val artworkUri: String
+)
+
+data class SongArtworkInfo(
+    val id: String,
+    val albumId: Long,
+    val artworkUri: String
+)
+
 data class SongThumbnailInfo(
     val id: String,
     val artworkUri: String,
@@ -34,6 +51,9 @@ abstract class SongDao {
     @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract suspend fun getAllSongs(): List<Song>
 
+    @Query("SELECT albumId, album, artist, artworkUri FROM songs")
+    abstract suspend fun getSongLibraryInfo(): List<SongLibraryInfo>
+
     @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract fun getAllSongsFlow(): Flow<List<Song>>
 
@@ -45,6 +65,9 @@ abstract class SongDao {
 
     @Query("SELECT id, dateModified FROM songs")
     abstract suspend fun getSongsSyncInfo(): List<SongSyncInfo>
+
+    @Query("SELECT id, albumId, artworkUri FROM songs")
+    abstract suspend fun getSongsArtworkInfo(): List<SongArtworkInfo>
 
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     abstract suspend fun deleteSongsByIds(ids: List<String>)
@@ -72,6 +95,28 @@ abstract class SongDao {
 
     @Query("SELECT COUNT(*) FROM songs")
     abstract suspend fun getSongCount(): Int
+
+    @Query("""
+        SELECT albumId AS id, MIN(album) AS albumName, MIN(artist) AS artist, 
+               MAX(artworkUri) AS coverPath, COUNT(*) AS songCount
+        FROM songs
+        GROUP BY albumId
+    """)
+    abstract suspend fun getAggregatedAlbums(): List<Album>
+
+    @Query("""
+        SELECT 0 AS id, artist AS name, COUNT(*) AS songCount, 
+               COUNT(DISTINCT albumId) AS albumCount
+        FROM songs
+        GROUP BY artist
+    """)
+    abstract suspend fun getAggregatedArtists(): List<Artist>
+
+    @Query("SELECT * FROM songs WHERE albumId IN (:albumIds)")
+    abstract suspend fun getSongsByAlbumIdsSync(albumIds: List<Long>): List<Song>
+
+    @Query("SELECT * FROM songs WHERE artist IN (:artists)")
+    abstract suspend fun getSongsByArtistsSync(artists: List<String>): List<Song>
 }
 
 @Dao

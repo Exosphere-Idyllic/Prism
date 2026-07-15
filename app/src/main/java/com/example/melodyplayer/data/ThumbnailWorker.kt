@@ -55,10 +55,9 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
             !cached.contains("album_${albumId}_128") || !cached.contains("album_${albumId}_256")
         }
 
-        val missingSongs = allSongs.filter { song ->
-            song.mediaUri.isNotEmpty() &&
-                (!cached.contains("song_${song.id}_128") || !cached.contains("song_${song.id}_256"))
-        }
+        // We disable mass background pre-generation of song-specific thumbnails to prevent
+        // startup lag and I/O bottlenecks. Custom/embedded song art will be generated on-demand.
+        val missingSongs = emptyList<SongThumbnailInfo>()
 
         Log.d(TAG, "Missing: ${missingAlbums.size} albums, ${missingSongs.size} songs")
 
@@ -84,19 +83,19 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
                 if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
                     // Files already on disk but not registered in Room — add them.
-                    newEntries.add(ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128))
-                    newEntries.add(ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256))
+                    listOf(128, 256).forEach { size ->
+                        newEntries.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                    }
                     Log.d(TAG, "Album $albumId already on disk, registering in Room")
                 } else {
                     val sizes = ThumbnailHelper.generateWebpFromUri(
                         applicationContext, song.artworkUri, file128, file256, albumId
                     )
-                    if (sizes.contains(128)) newEntries.add(
-                        ThumbnailCacheEntry("album_${albumId}_128", albumId.toString(), "album", 128)
-                    )
-                    if (sizes.contains(256)) newEntries.add(
-                        ThumbnailCacheEntry("album_${albumId}_256", albumId.toString(), "album", 256)
-                    )
+                    listOf(128, 256).forEach { size ->
+                        if (sizes.contains(size)) {
+                            newEntries.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                        }
+                    }
                     if (sizes.isEmpty()) {
                         Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
                     }
@@ -112,8 +111,9 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
                 if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
                     // Files already on disk but not in Room — register them.
-                    newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_128", songInfo.id, "song", 128))
-                    newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_256", songInfo.id, "song", 256))
+                    listOf(128, 256).forEach { size ->
+                        newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_$size", songInfo.id, "song", size))
+                    }
                     Log.d(TAG, "Song ${songInfo.id} already on disk, registering in Room")
                 } else {
                     val song = Song(
@@ -129,12 +129,11 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
                         track = 0
                     )
                     val sizes = ThumbnailHelper.generateSongWebp(applicationContext, song, file128, file256)
-                    if (sizes.contains(128)) newEntries.add(
-                        ThumbnailCacheEntry("song_${song.id}_128", song.id, "song", 128)
-                    )
-                    if (sizes.contains(256)) newEntries.add(
-                        ThumbnailCacheEntry("song_${song.id}_256", song.id, "song", 256)
-                    )
+                    listOf(128, 256).forEach { size ->
+                        if (sizes.contains(size)) {
+                            newEntries.add(ThumbnailCacheEntry("song_${song.id}_$size", song.id, "song", size))
+                        }
+                    }
                     if (sizes.isEmpty()) {
                         Log.w(TAG, "Failed to generate thumbnail for songId=${song.id} mediaUri=${songInfo.mediaUri}")
                     }

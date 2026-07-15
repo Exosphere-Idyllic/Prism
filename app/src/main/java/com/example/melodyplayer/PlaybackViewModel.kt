@@ -36,6 +36,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
     private val app = getApplication<Application>()
     private val database = AppDatabase.getDatabase(application)
+    private val repository = MainApplication.repository
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState = _uiState.asStateFlow()
@@ -52,10 +53,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         .map { it.isPlaying }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-
-    private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     private var activePlaylist: List<Song> = emptyList()
     private var controllerSongs: List<Song> = emptyList()
+    private var pendingControllerSongs: List<Song>? = null
+    private var lastSeekTime = 0L
 
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -63,8 +64,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private var shiftWindowJob: Job? = null
     private var playerListener: Player.Listener? = null
 
-    private val _currentSongColor = MutableStateFlow<Int?>(null)
-    val currentSongColor = _currentSongColor.asStateFlow()
 
     init {
         initializeController()
@@ -94,11 +93,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         currentSong: Song? = null,
         onComplete: () -> Unit = {}
     ) {
-        if (controllerSongs == songs && controller.mediaItemCount > 0) {
+        if ((pendingControllerSongs ?: controllerSongs) == songs && controller.mediaItemCount > 0) {
             onComplete()
             return
         }
-        controllerSongs = songs
+        pendingControllerSongs = songs
 
         // Only the current song needs artwork immediately (notification, mini-player).
         // All other items in the window get null artwork to avoid a 50-item decode burst.
@@ -123,10 +122,16 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     .build()
             }
             withContext(Dispatchers.Main) {
-                controller.setMediaItems(mediaItems)
-                if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
-                syncStateFromController(controller, songs)
-                onComplete()
+                try {
+                    controller.setMediaItems(mediaItems)
+                    if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
+                    controllerSongs = songs
+                    pendingControllerSongs = null
+                    syncStateFromController(controller, songs)
+                    onComplete()
+                } catch (e: Exception) {
+                    Log.e(TAG, "MediaController setMediaItems failed in updateControllerMediaItems", e)
+                }
             }
         }
     }
@@ -166,7 +171,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                 // Look up in controllerSongs (the window currently loaded in ExoPlayer)
                 // then fall back to the full library so next/previous always resolves.
                 val song = controllerSongs.find { it.id == mediaItem?.mediaId }
-                    ?: _allSongs.value.find { it.id == mediaItem?.mediaId }
+                    ?: repository.allSongs.value.find { it.id == mediaItem?.mediaId }
                 _uiState.value = _uiState.value.copy(currentSong = song)
                 _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
 
@@ -174,8 +179,11 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     val currentIndex = controllerSongs.indexOfFirst { it.id == song.id }
                     if (currentIndex != -1) {
                         val threshold = 5
-                        if (currentIndex < threshold || currentIndex >= controllerSongs.size - threshold) {
-                            shiftWindow(controller, song)
+                        val isSeek = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+                        val nearEdge = currentIndex < threshold || currentIndex >= controllerSongs.size - threshold
+                        if (isSeek || nearEdge) {
+                            val immediate = isSeek || currentIndex < 2 || currentIndex >= controllerSongs.size - 2
+                            shiftWindow(controller, song, immediate = immediate)
                         }
                     }
                 }
@@ -202,16 +210,16 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         return Pair(windowSongs, windowIndex)
     }
 
-    private fun shiftWindow(controller: MediaController, currentSong: Song) {
+    private fun shiftWindow(controller: MediaController, currentSong: Song, immediate: Boolean = false) {
         val playlist = activePlaylist
         if (playlist.isEmpty()) return
 
         val (windowSongs, windowIndex) = buildPlaybackWindow(currentSong, playlist)
-        if (controllerSongs == windowSongs) return
+        if ((pendingControllerSongs ?: controllerSongs) == windowSongs) return
 
         // Cancel any in-flight shift that hasn't run yet (debounce for rapid skips).
         shiftWindowJob?.cancel()
-        controllerSongs = windowSongs
+        pendingControllerSongs = windowSongs
 
         // Only the current song needs artwork immediately; the rest carry null to
         // avoid a ~50-item artwork-decode burst on every window slide.
@@ -219,7 +227,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
         shiftWindowJob = viewModelScope.launch(Dispatchers.Default) {
             // Absorb rapid consecutive transitions before doing any real work.
-            delay(300)
+            if (!immediate) {
+                delay(300)
+            }
 
             val mediaItems = windowSongs.map { song ->
                 val artworkUri = if (song.id == currentSongId && song.artworkUri.isNotEmpty())
@@ -239,11 +249,17 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
                     .build()
             }
             withContext(Dispatchers.Main) {
-                val currentPos = controller.currentPosition
-                val wasPlaying = controller.isPlaying
-                controller.setMediaItems(mediaItems, windowIndex, currentPos)
-                if (wasPlaying) {
-                    controller.play()
+                try {
+                    val currentPos = controller.currentPosition
+                    val wasPlaying = controller.isPlaying
+                    controller.setMediaItems(mediaItems, windowIndex, currentPos)
+                    if (wasPlaying) {
+                        controller.play()
+                    }
+                    controllerSongs = windowSongs
+                    pendingControllerSongs = null
+                } catch (e: Exception) {
+                    Log.e(TAG, "MediaController setMediaItems failed in shiftWindow", e)
                 }
             }
         }
@@ -256,12 +272,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             val listToUse = if (playlistSongs.isNotEmpty()) {
                 playlistSongs
             } else {
-                if (_allSongs.value.isEmpty()) {
-                    val dbSongs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
-                    _allSongs.value = dbSongs
-                    dbSongs
+                val cached = repository.allSongs.value
+                if (cached.isNotEmpty()) {
+                    cached
                 } else {
-                    _allSongs.value
+                    val dbSongs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
+                    dbSongs
                 }
             }
             activePlaylist = listToUse
@@ -283,6 +299,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         _progressState.value = _progressState.value.copy(currentPosition = positionMs)
+        lastSeekTime = System.currentTimeMillis()
     }
 
     private fun startProgressUpdate() {
@@ -290,10 +307,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         progressJob = viewModelScope.launch {
             while (true) {
                 mediaController?.let {
-                    _progressState.value = _progressState.value.copy(
-                        currentPosition = it.currentPosition.coerceAtLeast(0L),
-                        duration = it.duration.coerceAtLeast(0L)
-                    )
+                    if (System.currentTimeMillis() - lastSeekTime > 500) {
+                        _progressState.value = _progressState.value.copy(
+                            currentPosition = it.currentPosition.coerceAtLeast(0L),
+                            duration = it.duration.coerceAtLeast(0L)
+                        )
+                    }
                 }
                 delay(250.milliseconds)
             }

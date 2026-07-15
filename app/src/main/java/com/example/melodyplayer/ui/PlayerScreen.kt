@@ -1,7 +1,6 @@
 package com.example.melodyplayer.ui
 
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -43,31 +43,21 @@ fun PlayerScreen(
 ) {
     val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlayingState.collectAsStateWithLifecycle()
-    val currentSongColor by viewModel.currentSongColor.collectAsStateWithLifecycle(null)
-    val songThumbnail256Ids by libraryViewModel.songThumbnail256Ids.collectAsStateWithLifecycle()
-    val defaultColor = Color(0xFF1E1B4B)
-    val dominantColor = currentSongColor?.let { Color(it) } ?: defaultColor
 
-    val animatedColor by animateColorAsState(
-        targetValue = dominantColor,
-        animationSpec = tween(durationMillis = 800, easing = LinearOutSlowInEasing),
-        label = "playerBgColor"
-    )
-
-    val playerBrush = remember(animatedColor) {
-        Brush.verticalGradient(
-            colors = listOf(
-                animatedColor.copy(alpha = 0.45f),
-                Color(0xFF0F172A),
-                Color(0xFF020617)
-            )
-        )
-    }
+    // Static dark-to-darker gradient — no colour extraction needed.
+    // The AnimatedColor approach was removed because _currentSongColor was never populated.
+    val bgColor1 = Color(0xFF0F172A)
+    val bgColor2 = Color(0xFF020617)
+    val topColor = Color(0xFF1E1B4B).copy(alpha = 0.45f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(brush = playerBrush)
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(topColor, bgColor1, bgColor2)
+                )
+            )
     ) {
         Column(
             modifier = Modifier
@@ -109,12 +99,10 @@ fun PlayerScreen(
             val onPrevious = remember(viewModel) { { viewModel.previous() } }
             val onSeek = remember(viewModel) { { ms: Long -> viewModel.seekTo(ms) } }
 
-            val hasWebp256 = currentSong?.let { songThumbnail256Ids.contains(it.id) } ?: false
             PlayerCard(
                 currentSong = currentSong,
                 isPlaying = isPlaying,
                 progressStateFlow = viewModel.progressState,
-                hasWebp256 = hasWebp256,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious,
@@ -131,7 +119,6 @@ fun PlayerCard(
     currentSong: Song?,
     isPlaying: Boolean,
     progressStateFlow: StateFlow<ProgressState>,
-    hasWebp256: Boolean,
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -159,7 +146,6 @@ fun PlayerCard(
                 SongArtwork(
                     song = crossfadeSong,
                     contentDescription = "Album Art",
-                    hasWebp = hasWebp256,
                     size = 256,
                     crossfade = true,
                     iconSize = 80.dp,

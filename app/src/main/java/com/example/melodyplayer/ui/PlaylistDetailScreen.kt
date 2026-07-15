@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 
 private val NoOpSongAction: (Song) -> Unit = { _ -> }
@@ -45,8 +46,7 @@ fun PlaylistDetailScreen(
     val rawSongs by remember(playlistId) { libraryViewModel.getSongsForPlaylist(playlistId) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val songs = remember(rawSongs) { rawSongs.toImmutableList() }
-    val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(emptySet())
-    val songThumbnail128Ids by libraryViewModel.songThumbnail128Ids.collectAsStateWithLifecycle()
+    val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(persistentSetOf())
     val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
 
@@ -158,14 +158,12 @@ fun PlaylistDetailScreen(
                         ) {
                             Box(modifier = Modifier.weight(1f)) {
                                 val isFavorite = favoriteSongIds.contains(song.id)
-                                val hasWebp = songThumbnail128Ids.contains(song.id)
 
                                 SongListItemWrapper(
                                     song = song,
                                     currentSongId = currentSong?.id,
                                     isPlaying = isPlaying,
                                     isFavorite = isFavorite,
-                                    hasWebp = hasWebp,
                                     onSongSelected = onPlaySong,
                                     onFavoriteToggle = onToggleFav,
                                     onAddToPlaylist = NoOpSongAction

@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,12 +24,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.data.Song
+import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.coroutines.flow.debounce
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -40,17 +41,24 @@ fun SongList(
     songs: LazyPagingItems<Song>,
     currentSong: Song?,
     isPlaying: Boolean,
-    favoriteSongIds: Set<String>,
-    songThumbnail128Ids: Set<String>,
+    favoriteSongIds: ImmutableSet<String>,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
     libraryViewModel: LibraryViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    listState: LazyListState = rememberLazyListState()
 ) {
-    val listState = rememberLazyListState()
-    val latestThumbnail128Ids by rememberUpdatedState(songThumbnail128Ids)
+    // Tracks IDs requested in the current session. Reset when itemCount changes
+    // (library rescan) so that previously-failed thumbnails can be retried.
     val requestedThumbnailIds = remember { mutableSetOf<String>() }
+
+    // Reset request tracking when the song list changes (e.g. after a library rescan
+    // or search query change) — this allows retry of any thumbnails that failed
+    // silently in the previous session.
+    LaunchedEffect(songs.itemCount) {
+        if (songs.itemCount == 0) requestedThumbnailIds.clear()
+    }
 
     LaunchedEffect(listState, songs.itemCount) {
         snapshotFlow {
@@ -67,7 +75,6 @@ fun SongList(
                 for (i in firstIndex..lastIndex) {
                     val song = songs.peek(i) ?: continue
                     if (song.id in requestedThumbnailIds) continue
-                    if (latestThumbnail128Ids.contains(song.id)) continue
                     requestedThumbnailIds.add(song.id)
                     libraryViewModel.requestSongThumbnail(song)
                 }
@@ -77,7 +84,7 @@ fun SongList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(
@@ -88,21 +95,18 @@ fun SongList(
             val song = songs[index]
             if (song != null) {
                 val isFavorite = favoriteSongIds.contains(song.id)
-                val hasWebp = songThumbnail128Ids.contains(song.id)
 
                 SongListItemWrapper(
                     song = song,
                     currentSongId = currentSong?.id,
                     isPlaying = isPlaying,
                     isFavorite = isFavorite,
-                    hasWebp = hasWebp,
                     onSongSelected = onSongSelected,
                     onFavoriteToggle = onFavoriteToggle,
                     onAddToPlaylist = onAddToPlaylist
                 )
             }
         }
-        item(contentType = "spacer") { Spacer(modifier = Modifier.height(96.dp)) }
     }
 }
 
@@ -112,7 +116,6 @@ fun SongListItemWrapper(
     currentSongId: String?,
     isPlaying: Boolean,
     isFavorite: Boolean,
-    hasWebp: Boolean,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit
@@ -125,7 +128,6 @@ fun SongListItemWrapper(
         isSelected = isSelected,
         isPlaying = activePlayingState,
         isFavorite = isFavorite,
-        hasWebp = hasWebp,
         onSongSelected = onSongSelected,
         onFavoriteToggle = onFavoriteToggle,
         onAddToPlaylist = onAddToPlaylist
@@ -138,7 +140,6 @@ fun SongListItem(
     isSelected: Boolean,
     isPlaying: Boolean,
     isFavorite: Boolean,
-    hasWebp: Boolean,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit
@@ -157,7 +158,6 @@ fun SongListItem(
         SongArtwork(
             song = song,
             contentDescription = "Album art",
-            hasWebp = hasWebp,
             size = 128,
             crossfade = false,
             iconSize = 24.dp,

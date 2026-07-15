@@ -30,7 +30,6 @@ import com.example.melodyplayer.data.PlaylistWithCount
 @Composable
 fun AlbumGridItem(
     album: Album,
-    hasWebp: Boolean,
     onClick: () -> Unit
 ) {
     Card(
@@ -53,7 +52,6 @@ fun AlbumGridItem(
                     albumId = album.id,
                     coverUri = album.coverPath,
                     contentDescription = null,
-                    hasWebp = hasWebp,
                     size = 256,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -85,6 +83,7 @@ fun AlbumGridItem(
         }
     }
 }
+
 
 @Composable
 fun PlaylistListItem(
