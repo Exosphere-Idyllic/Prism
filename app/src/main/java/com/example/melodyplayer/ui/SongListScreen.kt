@@ -4,7 +4,6 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,8 +33,6 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
 
@@ -55,7 +52,7 @@ fun SongListScreen(
     onNavigateToAlbum: (Long, String) -> Unit,
     onNavigateToArtist: (String) -> Unit,
     onNavigateToPlaylist: (Long, String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val currentSong by playbackViewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by playbackViewModel.isPlayingState.collectAsStateWithLifecycle()
@@ -82,8 +79,14 @@ fun SongListScreen(
     val artistsListState = rememberLazyListState()
 
     var selectedTab by remember { mutableStateOf(LibraryTab.Biblioteca) }
-    var showCreateDialog by remember { mutableStateOf(false) }
+    var showCreateDialog by remember { mutableStateOf(value = false) }
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+
+    // FIX #8: Clear the search query when the user switches tabs so the active
+    // filter is not silently applied to all tabs without any visual indicator.
+    LaunchedEffect(selectedTab) {
+        if (searchQuery.isNotEmpty()) libraryViewModel.setSearchQuery("")
+    }
 
     val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_AUDIO
@@ -159,7 +162,7 @@ fun SongListScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
                             .background(Color(0xFF6366F1).copy(alpha = 0.15f))
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
                         Text(
                             text = "$totalSongs canciones",
@@ -188,12 +191,12 @@ fun SongListScreen(
                 contentColor = Color.White,
                 edgePadding = 24.dp,
                 divider = {},
-                indicator = {
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(selectedTab.ordinal),
-                        color = Color(0xFF6366F1)
-                    )
-                },
+                        indicator = {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(selectedTab.ordinal),
+                                color = Color(0xFF6366F1),
+                            )
+                        },
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             ) {
                 LibraryTab.entries.forEach { tab ->
@@ -204,7 +207,7 @@ fun SongListScreen(
                             Text(
                                 text = tab.title,
                                 fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
                             )
                         },
                         selectedContentColor = Color.White,
@@ -223,7 +226,7 @@ fun SongListScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     when (selectedTab) {
                         LibraryTab.Biblioteca -> {
-                            val isSongsLoading = (lazySongs.loadState.refresh is androidx.paging.LoadState.Loading) || (isLoading && lazySongs.itemCount == 0)
+                            val isSongsLoading = (lazySongs.loadState.refresh is androidx.paging.LoadState.Loading) || (isLoading && (lazySongs.itemCount == 0))
                             if (isSongsLoading) {
                                 SongListShimmer(modifier = Modifier.fillMaxSize())
                             } else if (lazySongs.itemCount == 0) {
@@ -241,8 +244,7 @@ fun SongListScreen(
                                     onSongSelected = onSongSelected,
                                     onFavoriteToggle = onFavoriteToggle,
                                     onAddToPlaylist = onAddToPlaylist,
-                                    libraryViewModel = libraryViewModel,
-                                    listState = songsListState
+                                    listState = songsListState,
                                 )
                             }
                         }
@@ -261,13 +263,12 @@ fun SongListScreen(
                                     contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 100.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
-                                    modifier = Modifier.fillMaxSize()
+                                    modifier = Modifier.fillMaxSize(),
                                 ) {
                                     items(albums, key = { it.id }) { album ->
-                                        AlbumGridItem(
-                                            album = album,
-                                            onClick = { onNavigateToAlbum(album.id, album.albumName) }
-                                        )
+                                        AlbumGridItem(album = album) {
+                                            onNavigateToAlbum(album.id, album.albumName)
+                                        }
                                     }
                                 }
                             }
@@ -304,8 +305,7 @@ fun SongListScreen(
                                             PlaylistListItem(
                                                 playlist = playlist,
                                                 onClick = { onNavigateToPlaylist(playlist.id, playlist.name) },
-                                                onDelete = { libraryViewModel.deletePlaylist(playlist.id) }
-                                            )
+                                            ) { libraryViewModel.deletePlaylist(playlist.id) }
                                         }
                                     }
                                 }
@@ -326,8 +326,8 @@ fun SongListScreen(
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    items(artists, key = { it.id }) { artist ->
-                                        ArtistListItem(artist = artist, onClick = { onNavigateToArtist(artist.name) })
+                                    items(artists, key = { it.name }) { artist ->
+                                        ArtistListItem(artist = artist) { onNavigateToArtist(artist.name) }
                                     }
                                 }
                             }
@@ -338,8 +338,7 @@ fun SongListScreen(
         }
 
         // ── Mini Player (bottom) ─────────────────
-        val miniPlayerSong = currentSong
-        if (miniPlayerSong != null) {
+        currentSong?.let { miniPlayerSong ->
             MiniPlayer(
                 song = miniPlayerSong,
                 isPlaying = isPlaying,
@@ -364,7 +363,7 @@ fun SongListScreen(
             AddToPlaylistDialog(
                 song = song,
                 libraryViewModel = libraryViewModel,
-                onDismiss = { songToAddToPlaylist = null }
+                onDismiss = { songToAddToPlaylist = null },
             )
         }
     }

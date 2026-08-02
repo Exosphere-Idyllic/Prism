@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -28,7 +27,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
@@ -37,27 +35,27 @@ import kotlinx.coroutines.flow.StateFlow
 @Composable
 fun PlayerScreen(
     viewModel: PlaybackViewModel,
-    libraryViewModel: LibraryViewModel,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlayingState.collectAsStateWithLifecycle()
 
     // Static dark-to-darker gradient — no colour extraction needed.
     // The AnimatedColor approach was removed because _currentSongColor was never populated.
-    val bgColor1 = Color(0xFF0F172A)
-    val bgColor2 = Color(0xFF020617)
-    val topColor = Color(0xFF1E1B4B).copy(alpha = 0.45f)
+    val backgroundBrush = remember {
+        val bgColor1 = Color(0xFF0F172A)
+        val bgColor2 = Color(0xFF020617)
+        val topColor = Color(0xFF1E1B4B).copy(alpha = 0.45f)
+        Brush.verticalGradient(
+            colors = listOf(topColor, bgColor1, bgColor2),
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(topColor, bgColor1, bgColor2)
-                )
-            )
+            .background(brush = backgroundBrush)
     ) {
         Column(
             modifier = Modifier
@@ -123,7 +121,7 @@ fun PlayerCard(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Card(
         modifier = modifier
@@ -206,7 +204,7 @@ fun PlaybackProgress(
     val currentPosition = progress.currentPosition
     val duration = progress.duration
 
-    var isDragging by remember { mutableStateOf(false) }
+    var isDragging by remember { mutableStateOf(value = false) }
     var dragPosition by remember { mutableFloatStateOf(0f) }
     val totalDuration = remember(duration) { duration.coerceAtLeast(1L) }
 

@@ -40,7 +40,7 @@ fun Modifier.shimmer(targetValue: Float = 1000f): Modifier = composed {
         listOf(
             Color.White.copy(alpha = 0.03f),
             Color.White.copy(alpha = 0.12f),
-            Color.White.copy(alpha = 0.03f)
+            Color.White.copy(alpha = 0.03f),
         )
     }
     val transition = rememberInfiniteTransition(label = "shimmer")

@@ -4,7 +4,6 @@ import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -36,21 +35,71 @@ object ThumbnailHelper {
         return inSampleSize
     }
 
-    fun decodeSampledBitmapFromBytes(data: ByteArray, reqWidth: Int, reqHeight: Int): Bitmap? {
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, opts)
-        opts.inSampleSize = calculateInSampleSize(opts, reqWidth, reqHeight)
-        opts.inJustDecodeBounds = false
-        return BitmapFactory.decodeByteArray(data, 0, data.size, opts)
+    fun decodeSampledBitmapFromStream(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
+                android.graphics.ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                    decoder.setTargetSize(reqWidth, reqHeight)
+                    // B3: ALLOCATOR_SOFTWARE is intentional here — the decoded bitmap is immediately
+                    // passed to writeBitmapAtomically() which calls Bitmap.compress() via a Canvas
+                    // operation. Hardware bitmaps cannot be read back by the CPU (compress() would
+                    // throw), so we force a software-backed allocation even though ALLOCATOR_DEFAULT
+                    // would be more efficient for display-only use cases (API 34+).
+                    decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            } else {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    BitmapFactory.decodeStream(input, null, opts)
+                } ?: return null
+
+                opts.inSampleSize = calculateInSampleSize(opts, reqWidth, reqHeight)
+                opts.inJustDecodeBounds = false
+
+                context.contentResolver.openInputStream(uri)?.use { input2 ->
+                    BitmapFactory.decodeStream(input2, null, opts)
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "decodeSampledBitmapFromStream failed for uri=$uri: ${e.message}")
+            null
+        }
     }
 
     /**
-     * Crops [bitmap] to a square (center-crop). Returns the same object if already square.
+     * Converts a [Bitmap] with [Bitmap.Config.HARDWARE] configuration to a software
+     * bitmap ([Bitmap.Config.ARGB_8888]). Returns the original bitmap if it is already software-backed,
+     * or null if software copy failed.
      */
-    private fun cropToSquare(bitmap: Bitmap): Bitmap {
+    private fun ensureSoftwareBitmap(bitmap: Bitmap): Bitmap? {
+        if (bitmap.isRecycled) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && bitmap.config == Bitmap.Config.HARDWARE) {
+            val softwareBmp = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            if (softwareBmp != null) {
+                bitmap.recycle()
+                return softwareBmp
+            }
+            return null
+        }
+        return bitmap
+    }
+
+    /**
+     * Crops [bitmap] to a square (center-crop). Returns the same object if already square,
+     * or null if crop failed/bitmap recycled.
+     */
+    private fun cropToSquare(bitmap: Bitmap): Bitmap? {
+        if (bitmap.isRecycled) return null
         if (bitmap.width == bitmap.height) return bitmap
         val size = minOf(bitmap.width, bitmap.height)
-        return Bitmap.createBitmap(bitmap, (bitmap.width - size) / 2, (bitmap.height - size) / 2, size, size)
+        if (size <= 0) return null
+        return try {
+            Bitmap.createBitmap(bitmap, (bitmap.width - size) / 2, (bitmap.height - size) / 2, size, size)
+        } catch (e: Exception) {
+            Log.e(TAG, "cropToSquare failed", e)
+            null
+        }
     }
 
     /**
@@ -66,6 +115,11 @@ object ThumbnailHelper {
     /**
      * Writes a [bitmap] to [dest] atomically via a sibling `.tmp` file.
      * Guarantees [dest] is never in a partially-written state.
+     *
+     * P5: Simplified the fallback chain — instead of trying deprecated WEBP then JPEG
+     * (two extra FileOutputStream opens), we fall back directly to JPEG on any primary
+     * format failure. This saves one FileOutputStream allocation on devices where the
+     * primary WEBP_LOSSY format fails.
      */
     private fun writeBitmapAtomically(
         bitmap: Bitmap,
@@ -73,22 +127,53 @@ object ThumbnailHelper {
         format: Bitmap.CompressFormat,
         quality: Int
     ): Boolean {
+        if (bitmap.isRecycled) {
+            Log.e(TAG, "Cannot write recycled bitmap to ${dest.name}")
+            return false
+        }
         val parent = dest.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             Log.e(TAG, "Cannot create parent directory for ${dest.absolutePath}")
             return false
         }
-        val tmp = File(dest.parent, "${dest.name}.tmp")
+        val tmp = File(dest.parent, "${dest.name}_${java.util.UUID.randomUUID()}.tmp")
         return try {
-            FileOutputStream(tmp).use { out ->
+            var compressed = FileOutputStream(tmp).use { out ->
                 bitmap.compress(format, quality, out)
-                out.flush()
+            }
+
+            // P5: single JPEG fallback instead of deprecated-WEBP then JPEG
+            if (!compressed && format != Bitmap.CompressFormat.JPEG) {
+                Log.w(TAG, "Primary compression format $format failed for ${dest.name}, falling back to JPEG")
+                if (tmp.exists()) tmp.delete()
+                compressed = FileOutputStream(tmp).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                }
+            }
+
+            if (!compressed || !tmp.exists() || tmp.length() == 0L) {
+                Log.e(TAG, "Bitmap compression failed or produced 0 bytes for ${dest.name}")
+                if (tmp.exists()) tmp.delete()
+                return false
             }
             if (dest.exists()) dest.delete()
-            tmp.renameTo(dest)
+            val success = tmp.renameTo(dest)
+            if (!success) {
+                try {
+                    tmp.copyTo(dest, overwrite = true)
+                } catch (copyEx: Exception) {
+                    Log.e(TAG, "Bitmap copyTo fallback failed for ${dest.name}", copyEx)
+                    if (tmp.exists()) tmp.delete()
+                    if (dest.exists() && dest.length() == 0L) dest.delete()
+                    return false
+                } finally {
+                    if (tmp.exists()) tmp.delete()
+                }
+            }
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write bitmap to ${dest.name}", e)
-            tmp.delete()
+            if (tmp.exists()) tmp.delete()
             false
         }
     }
@@ -104,7 +189,8 @@ object ThumbnailHelper {
     private fun loadThumbnailCompat(context: Context, uri: Uri, size: Int): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
-            context.contentResolver.loadThumbnail(uri, Size(size, size), null)
+            val bmp = context.contentResolver.loadThumbnail(uri, Size(size, size), null)
+            ensureSoftwareBitmap(bmp)
         } catch (e: Exception) {
             Log.d(TAG, "loadThumbnail failed for uri=$uri: ${e.message}")
             null
@@ -112,20 +198,12 @@ object ThumbnailHelper {
     }
 
     /**
-     * Reads a bitmap from a content URI via legacy [openInputStream].
+     * Reads a bitmap from a content URI via legacy [android.content.ContentResolver.openInputStream].
      * Works for URIs that are readable with READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE.
      */
     private fun loadBitmapViaStream(context: Context, uri: Uri): Bitmap? {
-        return try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val bytes = input.readBytes()
-                if (bytes.isEmpty()) null
-                else decodeSampledBitmapFromBytes(bytes, 512, 512)
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "openInputStream failed for uri=$uri: ${e.message}")
-            null
-        }
+        val bmp = decodeSampledBitmapFromStream(context, uri, 512, 512) ?: return null
+        return ensureSoftwareBitmap(bmp)
     }
 
     /**
@@ -141,14 +219,14 @@ object ThumbnailHelper {
                 albumId
             )
             val bmp = loadThumbnailCompat(context, albumsUri, 512)
-            if (bmp != null) {
+            if (bmp != null && !bmp.isRecycled) {
                 Log.d(TAG, "loadThumbnail(Albums URI) OK for albumId=$albumId")
                 return bmp
             }
             // 1b. Fallback within API29+: try the raw artworkUri via loadThumbnail
             if (artworkUri.isNotEmpty()) {
                 val bmpFallback = loadThumbnailCompat(context, artworkUri.toUri(), 512)
-                if (bmpFallback != null) {
+                if (bmpFallback != null && !bmpFallback.isRecycled) {
                     Log.d(TAG, "loadThumbnail(artworkUri) OK for albumId=$albumId")
                     return bmpFallback
                 }
@@ -158,7 +236,7 @@ object ThumbnailHelper {
         // 2. Legacy path — openInputStream on the artworkUri
         if (artworkUri.isNotEmpty()) {
             val bmp = loadBitmapViaStream(context, artworkUri.toUri())
-            if (bmp != null) {
+            if (bmp != null && !bmp.isRecycled) {
                 Log.d(TAG, "openInputStream OK for albumId=$albumId")
                 return bmp
             }
@@ -184,123 +262,48 @@ object ThumbnailHelper {
         file256: File,
         albumId: Long
     ): List<Int> {
-        val successSizes = mutableListOf<Int>()
-        try {
-            val original = loadAlbumBitmap(context, artworkUri, albumId) ?: run {
-                Log.w(TAG, "No bitmap available for albumId=$albumId")
-                return emptyList()
-            }
-            val square = cropToSquare(original)
+        val has128 = file128.exists() && file128.length() > 0
+        val has256 = file256.exists() && file256.length() > 0
+        if (has128 && has256) {
+            return listOf(128, 256)
+        }
 
-            if (!file128.exists()) {
-                val scaled = square.scale(128, 128)
+        val successSizes = mutableListOf<Int>()
+        var original: Bitmap? = null
+        var square: Bitmap? = null
+        try {
+            original = loadAlbumBitmap(context, artworkUri, albumId) ?: run {
+                Log.w(TAG, "No bitmap available for albumId=$albumId")
+                return if (has128) listOf(128) else if (has256) listOf(256) else emptyList()
+            }
+            square = cropToSquare(original) ?: original
+
+            if (!has128) {
+                val scaled = if (square.width == 128 && square.height == 128) square else square.scale(128, 128)
                 val ok = writeBitmapAtomically(scaled, file128, webpFormat, 80)
-                if (scaled != square) scaled.recycle()
+                if (scaled != square && !scaled.isRecycled) scaled.recycle()
                 if (ok) Log.d(TAG, "Wrote album_${albumId}_128.webp (${file128.length()} bytes)")
+                else if (file128.exists() && file128.length() == 0L) file128.delete()
             }
             if (file128.exists() && file128.length() > 0) successSizes.add(128)
 
-            if (!file256.exists()) {
-                val scaled = square.scale(256, 256)
+            if (!has256) {
+                val scaled = if (square.width == 256 && square.height == 256) square else square.scale(256, 256)
                 val ok = writeBitmapAtomically(scaled, file256, webpFormat, 80)
-                if (scaled != square) scaled.recycle()
+                if (scaled != square && !scaled.isRecycled) scaled.recycle()
                 if (ok) Log.d(TAG, "Wrote album_${albumId}_256.webp (${file256.length()} bytes)")
+                else if (file256.exists() && file256.length() == 0L) file256.delete()
             }
             if (file256.exists() && file256.length() > 0) successSizes.add(256)
-
-            if (square != original) square.recycle()
-            original.recycle()
         } catch (e: Exception) {
             Log.e(TAG, "Thumb gen failed for albumId=$albumId", e)
-        }
-        return successSizes
-    }
-
-    /**
-     * Generates 128 px and 256 px WebP thumbnails for a song.
-     * Strategy for loading the source bitmap:
-     *  1. Embedded art via [MediaMetadataRetriever] (song-specific cover art)
-     *  2. [loadThumbnail] on the song's media URI (API 29+)
-     *  3. [loadThumbnail] on the album's Albums URI (API 29+)
-     *  4. Legacy [openInputStream] on the song's [artworkUri] (API < 29 fallback)
-     */
-    fun generateSongWebp(
-        context: Context,
-        song: Song,
-        file128: File,
-        file256: File
-    ): List<Int> {
-        val successSizes = mutableListOf<Int>()
-        try {
-            var bitmap: Bitmap? = null
-
-            // 1. loadThumbnail on the media URI (API 29+) — Highly optimized, hardware decoders
-            if (song.mediaUri.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                bitmap = loadThumbnailCompat(context, Uri.parse(song.mediaUri), 512)
-                if (bitmap != null) Log.d(TAG, "loadThumbnail(mediaUri) OK for song ${song.id}")
+        } finally {
+            if (square != null && square != original && !square.isRecycled) {
+                square.recycle()
             }
-
-            // 2. loadThumbnail on the album's Albums URI (API 29+)
-            if (bitmap == null && song.albumId > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val albumsUri = ContentUris.withAppendedId(
-                    MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI,
-                    song.albumId
-                )
-                bitmap = loadThumbnailCompat(context, albumsUri, 512)
-                if (bitmap != null) Log.d(TAG, "loadThumbnail(albumsUri) OK for song ${song.id}")
+            if (original != null && !original.isRecycled) {
+                original.recycle()
             }
-
-            // 3. Embedded artwork via MediaMetadataRetriever — song-specific, fallback if OS thumb fails
-            if (bitmap == null && song.mediaUri.isNotEmpty()) {
-                var retriever: MediaMetadataRetriever? = null
-                try {
-                    retriever = MediaMetadataRetriever()
-                    retriever.setDataSource(context, Uri.parse(song.mediaUri))
-                    val artBytes = retriever.embeddedPicture
-                    if (artBytes != null) {
-                        bitmap = decodeSampledBitmapFromBytes(artBytes, 512, 512)
-                        if (bitmap != null) Log.d(TAG, "Embedded art found for song ${song.id}")
-                    }
-                } catch (e: Exception) {
-                    Log.d(TAG, "No embedded art for song ${song.id}: ${e.message}")
-                } finally {
-                    try { retriever?.close() } catch (_: Exception) {}
-                }
-            }
-
-            // 4. Legacy fallback: openInputStream on artworkUri
-            if (bitmap == null && song.artworkUri.isNotEmpty()) {
-                bitmap = loadBitmapViaStream(context, Uri.parse(song.artworkUri))
-                if (bitmap != null) Log.d(TAG, "openInputStream OK for song ${song.id}")
-            }
-
-            val original = bitmap ?: run {
-                Log.d(TAG, "No artwork source found for song ${song.id}")
-                return emptyList()
-            }
-
-            val square = cropToSquare(original)
-
-            if (!file128.exists()) {
-                val scaled = square.scale(128, 128)
-                val ok = writeBitmapAtomically(scaled, file128, webpFormat, 80)
-                if (scaled != square) scaled.recycle()
-                if (ok) Log.d(TAG, "Wrote song_${song.id}_128.webp (${file128.length()} bytes)")
-            }
-            if (file128.exists() && file128.length() > 0) successSizes.add(128)
-
-            if (!file256.exists()) {
-                val scaled = square.scale(256, 256)
-                val ok = writeBitmapAtomically(scaled, file256, webpFormat, 80)
-                if (scaled != square) scaled.recycle()
-                if (ok) Log.d(TAG, "Wrote song_${song.id}_256.webp (${file256.length()} bytes)")
-            }
-            if (file256.exists() && file256.length() > 0) successSizes.add(256)
-
-            if (square != original) square.recycle()
-            original.recycle()
-        } catch (e: Exception) {
-            Log.e(TAG, "Webp generation failed for song ${song.id}", e)
         }
         return successSizes
     }

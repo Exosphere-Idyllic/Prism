@@ -61,30 +61,12 @@ class ArtworkInterceptor(private val repository: MusicRepository) : Interceptor 
         val size = params.size
         val sizeKey = if (size <= 128) 128 else 256
 
-        // Check in-memory sets — O(1), no I/O
-        val hasSongWebp = if (sizeKey == 128)
-            repository.songThumbnail128Ids.value.contains(song.id)
-        else
-            repository.songThumbnail256Ids.value.contains(song.id)
-
-        if (hasSongWebp) {
-            val file = ThumbnailManager.getSongThumbnailFile(
-                repository.appContext, song.id, sizeKey
-            )
-            return Uri.fromFile(file)
-        }
-
-        // Fall back to album WebP if available
         if (song.albumId > 0) {
-            val hasAlbumWebp = if (sizeKey == 128)
-                repository.albumThumbnail128Ids.value.contains(song.albumId)
-            else
-                repository.albumThumbnail256Ids.value.contains(song.albumId)
-
-            if (hasAlbumWebp) {
-                val file = ThumbnailManager.getAlbumThumbnailFile(
-                    repository.appContext, song.albumId, sizeKey
-                )
+            val set = if (sizeKey == 128) repository.albumThumbnail128Ids.value else repository.albumThumbnail256Ids.value
+            val file = ThumbnailManager.getAlbumThumbnailFile(
+                repository.appContext, song.albumId, sizeKey
+            )
+            if (set.contains(song.albumId) || (file.exists() && file.length() > 0)) {
                 return Uri.fromFile(file)
             }
         }
@@ -96,16 +78,14 @@ class ArtworkInterceptor(private val repository: MusicRepository) : Interceptor 
     private fun resolveAlbumUri(params: AlbumArtworkParams): Any? {
         val sizeKey = if (params.size <= 128) 128 else 256
 
-        val hasAlbumWebp = if (sizeKey == 128)
-            repository.albumThumbnail128Ids.value.contains(params.albumId)
-        else
-            repository.albumThumbnail256Ids.value.contains(params.albumId)
-
-        if (hasAlbumWebp) {
+        if (params.albumId > 0) {
+            val set = if (sizeKey == 128) repository.albumThumbnail128Ids.value else repository.albumThumbnail256Ids.value
             val file = ThumbnailManager.getAlbumThumbnailFile(
                 repository.appContext, params.albumId, sizeKey
             )
-            return Uri.fromFile(file)
+            if (set.contains(params.albumId) || (file.exists() && file.length() > 0)) {
+                return Uri.fromFile(file)
+            }
         }
 
         return if (params.coverUri.isNotEmpty()) params.coverUri else null

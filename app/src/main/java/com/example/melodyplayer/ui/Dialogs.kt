@@ -27,7 +27,7 @@ import com.example.melodyplayer.data.Song
 fun AddToPlaylistDialog(
     song: Song,
     libraryViewModel: LibraryViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val playlists by libraryViewModel.playlistsFlow.collectAsStateWithLifecycle(emptyList())
 

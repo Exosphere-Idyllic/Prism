@@ -29,15 +29,13 @@ import com.example.melodyplayer.data.Song
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 
-private val NoOpSongAction: (Song) -> Unit = { _ -> }
-
 @Composable
 fun ArtistDetailScreen(
     artistName: String,
     playbackViewModel: PlaybackViewModel,
     libraryViewModel: LibraryViewModel,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     // remember() stabilises the Flow reference so collectAsStateWithLifecycle doesn't see
     // a new object on every recomposition (which would cancel + reopen the Room query each time).
@@ -136,7 +134,7 @@ fun ArtistDetailScreen(
                         isFavorite = isFavorite,
                         onSongSelected = onPlaySong,
                         onFavoriteToggle = onToggleFav,
-                        onAddToPlaylist = NoOpSongAction
+                        onAddToPlaylist = null
                     )
                 }
             }

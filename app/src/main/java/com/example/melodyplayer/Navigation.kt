@@ -81,7 +81,6 @@ fun MainNavigation() {
                 entry<Player> {
                     PlayerScreen(
                         viewModel = playbackViewModel,
-                        libraryViewModel = libraryViewModel,
                         onBack = { backStack.removeLastOrNull() },
                         modifier = Modifier.fillMaxSize()
                     )

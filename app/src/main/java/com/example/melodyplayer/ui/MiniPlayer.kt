@@ -13,8 +13,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,7 +26,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
@@ -38,7 +37,7 @@ fun MiniPlayer(
     progressStateFlow: StateFlow<ProgressState>,
     onPlayPauseToggle: () -> Unit,
     onOpenPlayer: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Card(
         modifier = modifier
@@ -47,7 +46,7 @@ fun MiniPlayer(
             .shadow(24.dp, RoundedCornerShape(20.dp))
             .clickable { onOpenPlayer() },
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E30)),
-        shape = RoundedCornerShape(20.dp)
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column {
             MiniPlayerProgressBar(progressStateFlow)
@@ -113,10 +112,9 @@ fun MiniPlayer(
 
 @Composable
 fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
-    val progress by progressStateFlow.collectAsStateWithLifecycle(ProgressState())
-
     // Read progress fraction inside drawBehind so only the *draw* phase is invalidated
     // on each 250 ms tick — the parent MiniPlayer composition is NOT re-executed.
+    val progressStateState = progressStateFlow.collectAsStateWithLifecycle()
     val gradientColors = remember {
         listOf(Color(0xFF818CF8), Color(0xFF6366F1))
     }
@@ -129,9 +127,11 @@ fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
             .drawBehind {
                 // Track background
                 drawRect(color = trackColor)
+                
+                val currentProgress = progressStateState.value
                 // Progress fill — fraction is read here (draw scope), not in composition
-                val fraction = if (progress.duration > 0) {
-                    (progress.currentPosition.toFloat() / progress.duration.toFloat())
+                val fraction = if (currentProgress.duration > 0) {
+                    (currentProgress.currentPosition.toFloat() / currentProgress.duration.toFloat())
                         .coerceIn(0f, 1f)
                 } else 0f
                 drawRect(

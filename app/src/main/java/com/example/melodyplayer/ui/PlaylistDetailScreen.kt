@@ -30,7 +30,6 @@ import com.example.melodyplayer.data.Song
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 
-private val NoOpSongAction: (Song) -> Unit = { _ -> }
 
 @Composable
 fun PlaylistDetailScreen(
@@ -39,7 +38,7 @@ fun PlaylistDetailScreen(
     playbackViewModel: PlaybackViewModel,
     libraryViewModel: LibraryViewModel,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     // remember() stabilises the Flow reference so collectAsStateWithLifecycle doesn't see
     // a new object on every recomposition (which would cancel + reopen the Room query each time).
@@ -148,35 +147,30 @@ fun PlaylistDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(songs, key = { it.id }) { song ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                val isFavorite = favoriteSongIds.contains(song.id)
+                    val isFavorite = favoriteSongIds.contains(song.id)
 
-                                SongListItemWrapper(
-                                    song = song,
-                                    currentSongId = currentSong?.id,
-                                    isPlaying = isPlaying,
-                                    isFavorite = isFavorite,
-                                    onSongSelected = onPlaySong,
-                                    onFavoriteToggle = onToggleFav,
-                                    onAddToPlaylist = NoOpSongAction
-                                )
-                            }
-                            IconButton(onClick = { onRemove(song) }) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Quitar",
-                                    tint = Color.Red.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            SongListItemWrapper(
+                                song = song,
+                                currentSongId = currentSong?.id,
+                                isPlaying = isPlaying,
+                                isFavorite = isFavorite,
+                                onSongSelected = onPlaySong,
+                                onFavoriteToggle = onToggleFav,
+                                onAddToPlaylist = null
+                            )
+                        }
+                        IconButton(onClick = { onRemove(song) }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Quitar",
+                                tint = Color.Red.copy(alpha = 0.5f),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }

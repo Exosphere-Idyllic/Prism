@@ -30,7 +30,7 @@ import com.example.melodyplayer.data.PlaylistWithCount
 @Composable
 fun AlbumGridItem(
     album: Album,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -89,7 +89,7 @@ fun AlbumGridItem(
 fun PlaylistListItem(
     playlist: PlaylistWithCount,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -153,7 +153,7 @@ fun PlaylistListItem(
 @Composable
 fun ArtistListItem(
     artist: Artist,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Card(
         modifier = Modifier

@@ -2,6 +2,7 @@ package com.example.melodyplayer
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
@@ -9,8 +10,11 @@ import coil3.memory.MemoryCache
 import com.example.melodyplayer.data.ArtworkInterceptor
 import com.example.melodyplayer.data.MusicRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
+import java.io.File
 
 class MainApplication : Application(), SingletonImageLoader.Factory {
 
@@ -27,11 +31,30 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
             private set
     }
 
-    /** Long-lived scope tied to the application process — never cancelled. */
-    private val applicationScope = CoroutineScope(SupervisorJob())
+    /**
+     * Long-lived scope tied to the application process — never cancelled.
+     * Explicit [Dispatchers.Default] avoids relying on the implicit EmptyCoroutineContext default.
+     */
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
+
+        // Clean up old volatile cache directory asynchronously on first launch.
+        // Moved here from AppDatabase to avoid a dependency from the DB layer
+        // back up to the Application layer.
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                val oldCacheDir = File(cacheDir, "album_art")
+                if (oldCacheDir.exists()) {
+                    oldCacheDir.deleteRecursively()
+                    Log.d("MainApplication", "Cleaned up old cache directory")
+                }
+            } catch (e: Exception) {
+                Log.w("MainApplication", "Failed to cleanup old cache directory", e)
+            }
+        }
+
         repository = MusicRepository(this, applicationScope)
         // Start MediaStore observation immediately so the first ViewModel attach is instant.
         repository.startObserving()

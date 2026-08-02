@@ -2,8 +2,8 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-  alias(libs.plugins.kotlin.android)
-  alias(libs.plugins.kotlin.kapt)
+  // alias(libs.plugins.kotlin.android)
+  alias(libs.plugins.ksp)
 }
 
 android {
@@ -92,23 +92,21 @@ dependencies {
 
   // Coil 3
   implementation(libs.coil.compose)
+  implementation(libs.coil.network.okhttp)
+  implementation(libs.kotlinx.coroutines.core)
 
   // Material Icons Extended
   implementation(libs.androidx.compose.material.icons.extended)
 
-  // Palette
-  implementation(libs.androidx.palette.ktx)
-
-  // DataStore & Serialization
-  implementation(libs.androidx.datastore)
+  // Serialization
   implementation(libs.kotlinx.serialization.json)
 
   // Room
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.room.ktx)
-  "kapt"(libs.androidx.room.compiler)
-  "kapt"(libs.kotlin.metadata)
-  "kapt"(libs.sqlite.jdbc)
+  ksp(libs.androidx.room.compiler)
+  ksp(libs.kotlin.metadata)
+  ksp(libs.sqlite.jdbc)
   implementation(libs.androidx.room.paging)
 
   // Paging 3
@@ -125,15 +123,6 @@ dependencies {
   implementation(libs.kotlinx.collections.immutable)
 }
 
-tasks.withType<org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask>().configureEach {
-    val tmpDir = layout.buildDirectory.dir("tmp").get().asFile
-    if (!tmpDir.exists()) tmpDir.mkdirs()
-    kaptProcessJvmArgs.add("-Djava.io.tmpdir=${tmpDir.absolutePath}")
-    kaptProcessJvmArgs.add("-Dorg.sqlite.tmpdir=${tmpDir.absolutePath}")
-}
 
-composeCompiler {
-    enableStrongSkippingMode = true
-}
 
 

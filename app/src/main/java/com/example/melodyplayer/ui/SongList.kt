@@ -1,6 +1,5 @@
 package com.example.melodyplayer.ui
 
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,15 +26,10 @@ import androidx.compose.ui.unit.sp
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
-import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.data.Song
 import kotlinx.collections.immutable.ImmutableSet
-import kotlinx.coroutines.flow.debounce
-import kotlin.time.Duration.Companion.milliseconds
 
-private const val THUMBNAIL_PREFETCH_BUFFER = 5
 
-@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun SongList(
     songs: LazyPagingItems<Song>,
@@ -45,42 +39,9 @@ fun SongList(
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
-    libraryViewModel: LibraryViewModel,
     modifier: Modifier = Modifier,
-    listState: LazyListState = rememberLazyListState()
+    listState: LazyListState = rememberLazyListState(),
 ) {
-    // Tracks IDs requested in the current session. Reset when itemCount changes
-    // (library rescan) so that previously-failed thumbnails can be retried.
-    val requestedThumbnailIds = remember { mutableSetOf<String>() }
-
-    // Reset request tracking when the song list changes (e.g. after a library rescan
-    // or search query change) — this allows retry of any thumbnails that failed
-    // silently in the previous session.
-    LaunchedEffect(songs.itemCount) {
-        if (songs.itemCount == 0) requestedThumbnailIds.clear()
-    }
-
-    LaunchedEffect(listState, songs.itemCount) {
-        snapshotFlow {
-            val visible = listState.layoutInfo.visibleItemsInfo
-            if (visible.isEmpty()) null
-            else visible.first().index to visible.last().index
-        }
-            .debounce(120.milliseconds)
-            .collect { range ->
-                if (range == null || songs.itemCount == 0) return@collect
-                val firstIndex = (range.first - THUMBNAIL_PREFETCH_BUFFER).coerceAtLeast(0)
-                val lastIndex = (range.second + THUMBNAIL_PREFETCH_BUFFER).coerceAtMost(songs.itemCount - 1)
-
-                for (i in firstIndex..lastIndex) {
-                    val song = songs.peek(i) ?: continue
-                    if (song.id in requestedThumbnailIds) continue
-                    requestedThumbnailIds.add(song.id)
-                    libraryViewModel.requestSongThumbnail(song)
-                }
-            }
-    }
-
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
@@ -118,7 +79,7 @@ fun SongListItemWrapper(
     isFavorite: Boolean,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
-    onAddToPlaylist: (Song) -> Unit
+    onAddToPlaylist: ((Song) -> Unit)? = null  // null = ocultar el botón
 ) {
     val isSelected = song.id == currentSongId
     val activePlayingState = isSelected && isPlaying
@@ -134,6 +95,11 @@ fun SongListItemWrapper(
     )
 }
 
+private val SelectedItemBgColor = Color(0x266366F1)
+private val PlaceholderArtworkBgColor = Color(0x0FFFFFFF)
+private val ArtistTextColor = Color(0x73FFFFFF)
+private val InactiveIconTint = Color(0x59FFFFFF)
+
 @Composable
 fun SongListItem(
     song: Song,
@@ -142,9 +108,9 @@ fun SongListItem(
     isFavorite: Boolean,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
-    onAddToPlaylist: (Song) -> Unit
+    onAddToPlaylist: ((Song) -> Unit)? = null  // null = ocultar el botón
 ) {
-    val bgColor = if (isSelected) Color(0xFF6366F1).copy(alpha = 0.15f) else Color.Transparent
+    val bgColor = if (isSelected) SelectedItemBgColor else Color.Transparent
 
     Row(
         modifier = Modifier
@@ -164,7 +130,7 @@ fun SongListItem(
             modifier = Modifier
                 .size(52.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(alpha = 0.06f))
+                .background(PlaceholderArtworkBgColor)
         )
 
         Spacer(modifier = Modifier.width(14.dp))
@@ -181,7 +147,7 @@ fun SongListItem(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = song.artist,
-                color = Color.White.copy(alpha = 0.45f),
+                color = ArtistTextColor,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -192,18 +158,21 @@ fun SongListItem(
             Icon(
                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = "Favorito",
-                tint = if (isFavorite) Color(0xFFEF4444) else Color.White.copy(alpha = 0.35f),
+                tint = if (isFavorite) Color(0xFFEF4444) else InactiveIconTint,
                 modifier = Modifier.size(20.dp)
             )
         }
 
-        IconButton(onClick = { onAddToPlaylist(song) }) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "Mas opciones",
-                tint = Color.White.copy(alpha = 0.45f),
-                modifier = Modifier.size(20.dp)
-            )
+        // FIX #11: solo mostrar si hay una acción real asignada
+        if (onAddToPlaylist != null) {
+            IconButton(onClick = { onAddToPlaylist(song) }) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Mas opciones",
+                    tint = Color.White.copy(alpha = 0.45f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         if (isPlaying) {

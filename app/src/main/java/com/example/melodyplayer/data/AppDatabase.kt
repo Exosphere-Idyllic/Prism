@@ -19,17 +19,6 @@ data class SongSyncInfo(
     val dateModified: Long
 )
 
-/**
- * Lightweight projection for rebuilding albums and artists without loading
- * the full [Song] entity (which includes long URIs and all fields).
- */
-data class SongLibraryInfo(
-    val albumId: Long,
-    val album: String,
-    val artist: String,
-    val artworkUri: String
-)
-
 data class SongArtworkInfo(
     val id: String,
     val albumId: Long,
@@ -51,12 +40,6 @@ abstract class SongDao {
     @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract suspend fun getAllSongs(): List<Song>
 
-    @Query("SELECT albumId, album, artist, artworkUri FROM songs")
-    abstract suspend fun getSongLibraryInfo(): List<SongLibraryInfo>
-
-    @Query("SELECT * FROM songs ORDER BY title ASC")
-    abstract fun getAllSongsFlow(): Flow<List<Song>>
-
     @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract fun getAllSongsPaging(): PagingSource<Int, Song>
 
@@ -72,9 +55,6 @@ abstract class SongDao {
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     abstract suspend fun deleteSongsByIds(ids: List<String>)
 
-    @Query("SELECT * FROM songs WHERE artworkUri != ''")
-    abstract suspend fun getAllSongsWithArtwork(): List<Song>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertAll(songs: List<Song>)
 
@@ -84,28 +64,62 @@ abstract class SongDao {
     @Query("SELECT * FROM songs WHERE artist = :artist ORDER BY title ASC")
     abstract fun getSongsByArtist(artist: String): Flow<List<Song>>
 
+    @Query("SELECT * FROM songs WHERE id = :id")
+    abstract suspend fun getSongByIdSync(id: String): Song?
+
     @Query("SELECT * FROM songs WHERE id IN (:ids)")
     abstract suspend fun getSongsByIds(ids: List<String>): List<Song>
 
-    @Query("SELECT * FROM songs WHERE albumId = :albumId")
-    abstract suspend fun getSongsByAlbumSync(albumId: Long): List<Song>
+    /**
+     * Fetches a bounded window of songs centred on [id] (sorted by title ASC).
+     *
+     * The window contains up to [half] songs before the target, the target
+     * itself, and up to [half] songs after — at most [half]*2+1 rows total.
+     * This replaces the full-library [getAllSongs] fallback in playback
+     * scenarios where no explicit playlist is available.
+     *
+     * The UNION ALL approach avoids a full-table scan: each sub-query uses the
+     * (title) index and the two LIMIT clauses cap the row count hard.
+     */
+    @Query("""
+        SELECT * FROM (
+            SELECT * FROM songs
+            WHERE title < (SELECT title FROM songs WHERE id = :id)
+               OR (title = (SELECT title FROM songs WHERE id = :id) AND id < :id)
+            ORDER BY title DESC, id DESC
+            LIMIT :half
+        )
 
-    @Query("SELECT * FROM songs WHERE artist = :artist")
-    abstract suspend fun getSongsByArtistSync(artist: String): List<Song>
+        UNION ALL
+
+        SELECT * FROM songs WHERE id = :id
+
+        UNION ALL
+
+        SELECT * FROM (
+            SELECT * FROM songs
+            WHERE title > (SELECT title FROM songs WHERE id = :id)
+               OR (title = (SELECT title FROM songs WHERE id = :id) AND id > :id)
+            ORDER BY title ASC, id ASC
+            LIMIT :half
+        )
+    """)
+    abstract suspend fun getSongsWindowAroundId(id: String, half: Int = 25): List<Song>
 
     @Query("SELECT COUNT(*) FROM songs")
     abstract suspend fun getSongCount(): Int
 
     @Query("""
         SELECT albumId AS id, MIN(album) AS albumName, MIN(artist) AS artist, 
-               MAX(artworkUri) AS coverPath, COUNT(*) AS songCount
+               COALESCE(MAX(CASE WHEN artworkUri != '' THEN artworkUri ELSE NULL END), '') AS coverPath,
+               COUNT(*) AS songCount
         FROM songs
         GROUP BY albumId
     """)
     abstract suspend fun getAggregatedAlbums(): List<Album>
 
     @Query("""
-        SELECT 0 AS id, artist AS name, COUNT(*) AS songCount, 
+        SELECT artist AS name, COUNT(*) AS songCount,
                COUNT(DISTINCT albumId) AS albumCount
         FROM songs
         GROUP BY artist
@@ -136,6 +150,9 @@ interface AlbumDao {
     @Query("DELETE FROM albums WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    @Query("DELETE FROM albums WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Query("DELETE FROM albums")
     suspend fun deleteAll()
 }
@@ -154,8 +171,14 @@ interface ArtistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(artist: Artist)
 
-    @Query("DELETE FROM artists WHERE id = :id")
-    suspend fun deleteById(id: Long)
+    @Query("SELECT * FROM artists WHERE name = :name")
+    suspend fun getByName(name: String): Artist?
+
+    @Query("DELETE FROM artists WHERE name = :name")
+    suspend fun deleteByName(name: String)
+
+    @Query("DELETE FROM artists WHERE name IN (:names)")
+    suspend fun deleteByNames(names: List<String>)
 
     @Query("DELETE FROM artists")
     suspend fun deleteAll()
@@ -225,6 +248,9 @@ interface PlaylistDao {
     """)
     fun getPlaylistSongIdsFlow(name: String): Flow<List<String>>
 
+    @Query("DELETE FROM playlist_songs WHERE songId IN (:songIds)")
+    suspend fun deletePlaylistSongsForSongIds(songIds: List<String>)
+
     @Transaction
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId")
     suspend fun clearPlaylistSongs(playlistId: Long)
@@ -232,7 +258,7 @@ interface PlaylistDao {
 
 @Database(
     entities = [Song::class, Album::class, Artist::class, Playlist::class, PlaylistSong::class, ThumbnailCacheEntry::class],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -243,32 +269,37 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun thumbnailCacheDao(): ThumbnailCacheDao
 
     companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
+        /**
+         * A1: Kotlin [lazy] with SYNCHRONIZED mode is equivalent to double-checked locking
+         * but is idiomatic, compiler-verified, and eliminates the need for a manual @Volatile field.
+         */
+        private val instance: AppDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            Room.databaseBuilder(
+                // ApplicationProvider is not used here; context is passed by callers.
+                // The real context is injected via the factory lambda below.
+                // This property is initialised lazily on the first getDatabase() call.
+                // Note: this lambda is called once and the result is cached forever.
+                _context!!.applicationContext,
+                AppDatabase::class.java,
+                "melody_player_db"
+            )
+                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                // FIX #5: Allow destructive migration from historical versions (1-8).
+                // dropAllTables=true ensures a clean slate; without it Room would
+                // attempt partial migration and crash with no Migration objects defined.
+                .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8)
+                .build()
+        }
+
+        // Holds the application Context until the lazy is first accessed.
+        @Volatile private var _context: Context? = null
 
         fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                // Cleanup old volatile cache directory
-                try {
-                    val oldCacheDir = File(context.cacheDir, "album_art")
-                    if (oldCacheDir.exists()) {
-                        oldCacheDir.deleteRecursively()
-                        Log.d("AppDatabase", "Cleaned up old cache directory")
-                    }
-                } catch (e: Exception) {
-                    Log.w("AppDatabase", "Failed to cleanup old cache directory", e)
-                }
-
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "melody_player_db"
-                )
-                .fallbackToDestructiveMigration()
-                .build()
-                INSTANCE = instance
-                instance
-            }
+            // Store the context so the lazy lambda can use it.
+            // Only written once (on first call); subsequent writes are no-ops because
+            // the lazy is only initialised once anyway.
+            if (_context == null) _context = context.applicationContext
+            return instance
         }
     }
 }

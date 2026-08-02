@@ -6,8 +6,8 @@ import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -25,7 +25,6 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
     companion object {
         private const val TAG = "ThumbnailWorker"
-        private const val CHUNK_SIZE = 25
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -47,104 +46,60 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
         Log.d(TAG, "Starting: ${allSongs.size} songs, ${cached.size} already cached")
 
-        val uniqueAlbums = allSongs
+        val missingAlbums = allSongs.asSequence()
             .filter { it.albumId > 0 && it.artworkUri.isNotEmpty() }
+            .filter { !cached.contains("album_${it.albumId}_128") || !cached.contains("album_${it.albumId}_256") }
             .associateBy { it.albumId }
 
-        val missingAlbums = uniqueAlbums.filter { (albumId, _) ->
-            !cached.contains("album_${albumId}_128") || !cached.contains("album_${albumId}_256")
-        }
+        Log.d(TAG, "Missing: ${missingAlbums.size} albums")
 
-        // We disable mass background pre-generation of song-specific thumbnails to prevent
-        // startup lag and I/O bottlenecks. Custom/embedded song art will be generated on-demand.
-        val missingSongs = emptyList<SongThumbnailInfo>()
+        val limitedDispatcher = Dispatchers.IO.limitedParallelism(2)
+        val pendingEntries = java.util.concurrent.ConcurrentLinkedQueue<ThumbnailCacheEntry>()
 
-        Log.d(TAG, "Missing: ${missingAlbums.size} albums, ${missingSongs.size} songs")
+        coroutineScope {
+            for ((albumId, song) in missingAlbums) {
+                launch(limitedDispatcher) {
+                    val file128 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 128)
+                    val file256 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 256)
 
-        val semaphore = Semaphore(2)
-        val newEntries = mutableListOf<ThumbnailCacheEntry>()
+                    val entriesToInsert = mutableListOf<ThumbnailCacheEntry>()
 
-        suspend fun checkFlushEntries(force: Boolean = false) {
-            if (newEntries.isNotEmpty() && (force || newEntries.size >= CHUNK_SIZE)) {
-                val toInsert = ArrayList(newEntries)
-                newEntries.clear()
-                thumbnailCacheDao.insertAll(toInsert)
-                Log.d(TAG, "Flushed ${toInsert.size} cache entries to Room")
-            }
-        }
-
-        // Use explicit `for` loop so the suspend function `withPermit` is called
-        // correctly in a suspendable context (Map.forEach {} with a suspend lambda
-        // compiles but runs the semaphore logic in a blocking manner).
-        for ((albumId, song) in missingAlbums) {
-            semaphore.withPermit {
-                val file128 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 128)
-                val file256 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 256)
-
-                if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
-                    // Files already on disk but not registered in Room — add them.
-                    listOf(128, 256).forEach { size ->
-                        newEntries.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
-                    }
-                    Log.d(TAG, "Album $albumId already on disk, registering in Room")
-                } else {
-                    val sizes = ThumbnailHelper.generateWebpFromUri(
-                        applicationContext, song.artworkUri, file128, file256, albumId
-                    )
-                    listOf(128, 256).forEach { size ->
-                        if (sizes.contains(size)) {
-                            newEntries.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                    if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
+                        // Files already on disk but not registered in Room — add them.
+                        listOf(128, 256).forEach { size ->
+                            entriesToInsert.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                        }
+                        Log.d(TAG, "Album $albumId already on disk, registering in Room")
+                    } else {
+                        val sizes = ThumbnailHelper.generateWebpFromUri(
+                            applicationContext, song.artworkUri, file128, file256, albumId
+                        )
+                        listOf(128, 256).forEach { size ->
+                            if (sizes.contains(size)) {
+                                entriesToInsert.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                            }
+                        }
+                        if (sizes.isEmpty()) {
+                            Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
                         }
                     }
-                    if (sizes.isEmpty()) {
-                        Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
+
+                    if (entriesToInsert.isNotEmpty()) {
+                        pendingEntries.addAll(entriesToInsert)
                     }
                 }
-                checkFlushEntries()
             }
         }
 
-        for (songInfo in missingSongs) {
-            semaphore.withPermit {
-                val file128 = ThumbnailManager.getSongThumbnailFile(applicationContext, songInfo.id, 128)
-                val file256 = ThumbnailManager.getSongThumbnailFile(applicationContext, songInfo.id, 256)
-
-                if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
-                    // Files already on disk but not in Room — register them.
-                    listOf(128, 256).forEach { size ->
-                        newEntries.add(ThumbnailCacheEntry("song_${songInfo.id}_$size", songInfo.id, "song", size))
-                    }
-                    Log.d(TAG, "Song ${songInfo.id} already on disk, registering in Room")
-                } else {
-                    val song = Song(
-                        id = songInfo.id,
-                        title = "",
-                        artist = "",
-                        album = "",
-                        albumId = songInfo.albumId,
-                        mediaUri = songInfo.mediaUri,
-                        artworkUri = songInfo.artworkUri,
-                        duration = 0L,
-                        dateModified = 0L,
-                        track = 0
-                    )
-                    val sizes = ThumbnailHelper.generateSongWebp(applicationContext, song, file128, file256)
-                    listOf(128, 256).forEach { size ->
-                        if (sizes.contains(size)) {
-                            newEntries.add(ThumbnailCacheEntry("song_${song.id}_$size", song.id, "song", size))
-                        }
-                    }
-                    if (sizes.isEmpty()) {
-                        Log.w(TAG, "Failed to generate thumbnail for songId=${song.id} mediaUri=${songInfo.mediaUri}")
-                    }
-                }
-                checkFlushEntries()
+        val allNewEntries = pendingEntries.toList()
+        if (allNewEntries.isNotEmpty()) {
+            allNewEntries.chunked(100).forEach { chunk ->
+                thumbnailCacheDao.insertAll(chunk)
             }
+            Log.d(TAG, "Persisted ${allNewEntries.size} total thumbnail entries to Room")
         }
 
-        checkFlushEntries(force = true)
-
-        Log.d(TAG, "Done. Total new entries persisted to Room: ${newEntries.size} (plus any flushed mid-run)")
+        Log.d(TAG, "Done. All thumbnail entries persisted to Room.")
         Result.success()
     }
 }

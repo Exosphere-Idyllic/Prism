@@ -7,13 +7,18 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 
+import androidx.room.Index
+
 /**
  * Persists which WebP thumbnails have been generated so that the app does not
  * need to scan the filesystem on every start-up.
  *
  * The [cacheKey] is the canonical file stem, e.g. "album_42_128" or "song_7_256".
  */
-@Entity(tableName = "thumbnail_cache")
+@Entity(
+    tableName = "thumbnail_cache",
+    indices = [Index(value = ["type", "entityId"])]
+)
 data class ThumbnailCacheEntry(
     @PrimaryKey val cacheKey: String,   // "album_<id>_<size>" | "song_<id>_<size>"
     val entityId: String,               // albumId or songId (as String)
@@ -39,7 +44,7 @@ interface ThumbnailCacheDao {
     suspend fun deleteOrphanedAlbumEntries(albumIds: List<String>)
 
     @Query("SELECT entityId, type, size FROM thumbnail_cache")
-    suspend fun getAllInfo(): List<ThumbnailCacheInfo>
+    fun getAllInfoFlow(): kotlinx.coroutines.flow.Flow<List<ThumbnailCacheInfo>>
 
     @Query("SELECT cacheKey FROM thumbnail_cache")
     suspend fun getAllKeys(): List<String>

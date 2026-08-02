@@ -27,10 +27,10 @@ object ThumbnailManager {
      */
     @Throws(IOException::class)
     fun getThumbnailDir(context: Context): File {
-        cachedDir?.let { return it }
+        cachedDir?.let { if (it.exists()) return it }
 
         synchronized(this) {
-            cachedDir?.let { return it }
+            cachedDir?.let { if (it.exists()) return it }
 
             val dir = File(context.filesDir, THUMBNAIL_SUBDIR)
             if (!dir.exists() && !dir.mkdirs()) {
@@ -51,16 +51,16 @@ object ThumbnailManager {
      * Example: "album_42_128.webp"
      */
     fun getAlbumThumbnailFile(context: Context, albumId: Long, size: Int): File {
-        return File(getThumbnailDir(context), "album_${albumId}_${size}.webp")
+        val dir = try {
+            getThumbnailDir(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get thumbnail dir, falling back to filesDir/thumbnails", e)
+            File(context.filesDir, THUMBNAIL_SUBDIR).apply { if (!exists()) mkdirs() }
+        }
+        return File(dir, "album_${albumId}_${size}.webp")
     }
 
-    /**
-     * Get the path for a specific song thumbnail file.
-     * Example: "song_abc123_256.webp"
-     */
-    fun getSongThumbnailFile(context: Context, songId: String, size: Int): File {
-        return File(getThumbnailDir(context), "song_${songId}_${size}.webp")
-    }
+
 
     /**
      * Migrates thumbnails from the old external storage location to the new
@@ -92,15 +92,23 @@ object ThumbnailManager {
         var migrated = 0
         for (file in files) {
             if (file.isFile && file.extension == "webp") {
-                val dest = File(newDir, file.name)
-                if (!dest.exists()) {
-                    file.copyTo(dest, overwrite = false)
-                    migrated++
+                try {
+                    val dest = File(newDir, file.name)
+                    if (!dest.exists()) {
+                        file.copyTo(dest, overwrite = false)
+                        migrated++
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to migrate file ${file.name}", e)
                 }
             }
         }
         // Clean up old directory after migration
-        oldDir.deleteRecursively()
+        try {
+            oldDir.deleteRecursively()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete old thumbnail directory ${oldDir.absolutePath}", e)
+        }
         if (migrated > 0) {
             Log.d(TAG, "Migrated $migrated thumbnails to internal storage")
         }
