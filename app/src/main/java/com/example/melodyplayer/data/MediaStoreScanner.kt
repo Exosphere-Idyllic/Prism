@@ -241,7 +241,7 @@ class MediaStoreScannerImpl(
 
             val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>()
                 .setConstraints(constraints)
-                .setInitialDelay(5, TimeUnit.SECONDS)
+                .setInitialDelay(10, TimeUnit.SECONDS)
                 .build()
 
             WorkManager.getInstance(app).enqueueUniqueWork(

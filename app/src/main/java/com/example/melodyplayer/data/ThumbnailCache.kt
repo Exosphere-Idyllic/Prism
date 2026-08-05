@@ -8,6 +8,12 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 
 import androidx.room.Index
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 
 /**
  * Persists which WebP thumbnails have been generated so that the app does not
@@ -55,4 +61,35 @@ data class ThumbnailCacheInfo(
     val type: String,
     val size: Int
 )
+
+class ThumbnailCacheManager(
+    private val thumbnailCacheDao: ThumbnailCacheDao,
+    private val scope: CoroutineScope
+) {
+    private val _albumThumbnail128Ids = MutableStateFlow<Set<Long>>(emptySet<Long>())
+    val albumThumbnail128Ids = _albumThumbnail128Ids.asStateFlow()
+
+    private val _albumThumbnail256Ids = MutableStateFlow<Set<Long>>(emptySet<Long>())
+    val albumThumbnail256Ids = _albumThumbnail256Ids.asStateFlow()
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            thumbnailCacheDao.getAllInfoFlow()
+                .flowOn(Dispatchers.IO)
+                .collect { infoList ->
+                    val set128 = mutableSetOf<Long>()
+                    val set256 = mutableSetOf<Long>()
+                    for (info in infoList) {
+                        if (info.type == "album") {
+                            val id = info.entityId.toLongOrNull() ?: continue
+                            if (info.size == 128) set128.add(id)
+                            else if (info.size == 256) set256.add(id)
+                        }
+                    }
+                    _albumThumbnail128Ids.value = set128
+                    _albumThumbnail256Ids.value = set256
+                }
+        }
+    }
+}
 

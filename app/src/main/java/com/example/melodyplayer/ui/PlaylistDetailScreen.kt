@@ -12,8 +12,9 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +41,8 @@ fun PlaylistDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val currentOnBack by rememberUpdatedState(onBack)
+
     // remember() stabilises the Flow reference so collectAsStateWithLifecycle doesn't see
     // a new object on every recomposition (which would cancel + reopen the Room query each time).
     val rawSongs by remember(playlistId) { libraryViewModel.getSongsForPlaylist(playlistId) }
@@ -71,7 +74,7 @@ fun PlaylistDetailScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = { currentOnBack() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
                 }
                 Spacer(modifier = Modifier.width(8.dp))

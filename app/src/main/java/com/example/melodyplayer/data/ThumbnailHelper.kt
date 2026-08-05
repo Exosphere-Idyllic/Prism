@@ -207,9 +207,33 @@ object ThumbnailHelper {
     }
 
     /**
+     * Extracts embedded artwork directly from an audio file using [android.media.MediaMetadataRetriever].
+     * Wrapped in a Kotlin `.use { ... }` block to guarantee native retriever release and avoid leaks.
+     */
+    fun extractEmbeddedArtwork(context: Context, uri: Uri): Bitmap? {
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.use { r ->
+                r.setDataSource(context, uri)
+                val picture = r.embeddedPicture ?: return@use null
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(picture, 0, picture.size, opts)
+                opts.inSampleSize = calculateInSampleSize(opts, 512, 512)
+                opts.inJustDecodeBounds = false
+                val bmp = BitmapFactory.decodeByteArray(picture, 0, picture.size, opts) ?: return@use null
+                ensureSoftwareBitmap(bmp)
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "extractEmbeddedArtwork failed for uri=$uri: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Loads album artwork using a prioritized strategy:
      *  1. [MediaStore.Audio.Albums] URI via [loadThumbnail] (API 29+) — most reliable on Scoped Storage
      *  2. Legacy [openInputStream] on the raw [artworkUri] — fallback for API < 29
+     *  3. Embedded ID3 metadata via [MediaMetadataRetriever.use] block
      */
     private fun loadAlbumBitmap(context: Context, artworkUri: String, albumId: Long): Bitmap? {
         // 1. Modern path — loadThumbnail via Albums content URI (API 29+)
@@ -239,6 +263,12 @@ object ThumbnailHelper {
             if (bmp != null && !bmp.isRecycled) {
                 Log.d(TAG, "openInputStream OK for albumId=$albumId")
                 return bmp
+            }
+            // 3. Fallback path — extract embedded picture via MediaMetadataRetriever.use
+            val embeddedBmp = extractEmbeddedArtwork(context, artworkUri.toUri())
+            if (embeddedBmp != null && !embeddedBmp.isRecycled) {
+                Log.d(TAG, "extractEmbeddedArtwork OK for albumId=$albumId")
+                return embeddedBmp
             }
         }
 

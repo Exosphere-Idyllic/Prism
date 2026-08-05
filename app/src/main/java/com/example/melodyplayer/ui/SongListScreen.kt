@@ -118,11 +118,11 @@ fun SongListScreen(
         )
     }
 
-    // Stable lambdas hoisted outside conditional blocks
-    val onSongSelected: (Song) -> Unit = remember(playbackViewModel, onNavigateToPlayer) {
+    val currentOnNavigateToPlayer by rememberUpdatedState(onNavigateToPlayer)
+    val onSongSelected: (Song) -> Unit = remember(playbackViewModel) {
         { song: Song ->
             playbackViewModel.playSong(song)
-            onNavigateToPlayer()
+            currentOnNavigateToPlayer()
         }
     }
     val onFavoriteToggle = remember(libraryViewModel) {

@@ -70,7 +70,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             repository.getAlbumsFlow(query)
         }
         .map { it.toImmutableList() }
-        .flowOn(Dispatchers.Default)
+        .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
@@ -81,19 +81,19 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             repository.getArtistsFlow(query)
         }
         .map { it.toImmutableList() }
-        .flowOn(Dispatchers.Default)
+        .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
-    val playlistsFlow = repository.playlistsFlow
+    val playlistsFlow = repository.playlistsFlow.flowOn(Dispatchers.IO)
     val playlistsWithCountsFlow = repository.playlistsWithCountsFlow
         .map { it.toImmutableList() }
-        .flowOn(Dispatchers.Default)
+        .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), persistentListOf())
 
     val favoriteSongIds: Flow<ImmutableSet<String>> = repository.getFavoriteSongIds()
         .map { it.toImmutableSet() }
-        .flowOn(Dispatchers.Default)
+        .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), persistentSetOf())
 
     // The repository is a singleton managed by MainApplication — we do NOT call
@@ -104,28 +104,28 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun toggleFavorite(song: Song) {
-        viewModelScope.launch { repository.toggleFavorite(song) }
+        viewModelScope.launch(Dispatchers.IO) { repository.toggleFavorite(song) }
     }
 
     fun createPlaylist(name: String) {
-        viewModelScope.launch { repository.createPlaylist(name) }
+        viewModelScope.launch(Dispatchers.IO) { repository.createPlaylist(name) }
     }
 
     fun deletePlaylist(id: Long) {
-        viewModelScope.launch { repository.deletePlaylist(id) }
+        viewModelScope.launch(Dispatchers.IO) { repository.deletePlaylist(id) }
     }
 
     fun addSongToPlaylist(playlistId: Long, songId: String) {
-        viewModelScope.launch { repository.addSongToPlaylist(playlistId, songId) }
+        viewModelScope.launch(Dispatchers.IO) { repository.addSongToPlaylist(playlistId, songId) }
     }
 
     fun removeSongFromPlaylist(playlistId: Long, songId: String) {
-        viewModelScope.launch { repository.removeSongFromPlaylist(playlistId, songId) }
+        viewModelScope.launch(Dispatchers.IO) { repository.removeSongFromPlaylist(playlistId, songId) }
     }
 
-    fun getSongsForPlaylist(id: Long) = repository.getSongsForPlaylist(id)
-    fun getSongsByAlbum(id: Long) = repository.getSongsByAlbum(id)
-    fun getSongsByArtist(name: String) = repository.getSongsByArtist(name)
+    fun getSongsForPlaylist(id: Long) = repository.getSongsForPlaylist(id).flowOn(Dispatchers.IO)
+    fun getSongsByAlbum(id: Long) = repository.getSongsByAlbum(id).flowOn(Dispatchers.IO)
+    fun getSongsByArtist(name: String) = repository.getSongsByArtist(name).flowOn(Dispatchers.IO)
 
     fun loadLocalSongs() {
         repository.triggerScan()

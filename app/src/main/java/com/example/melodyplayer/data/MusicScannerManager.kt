@@ -2,9 +2,11 @@ package com.example.melodyplayer.data
 
 import android.app.Application
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Orchestrates the [MediaStoreScanner] and handles scan completion.
@@ -24,7 +26,7 @@ class MusicScannerManager(
         scope = scope,
         database = database,
         onScanCompleted = { _, _, _ ->
-            val count = database.songDao().getSongCount()
+            val count = withContext(Dispatchers.IO) { database.songDao().getSongCount() }
             _totalSongsCount.value = count
             onTotalCountChanged(count)
         }

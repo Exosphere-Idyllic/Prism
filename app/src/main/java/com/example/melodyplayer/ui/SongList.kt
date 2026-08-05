@@ -110,6 +110,10 @@ fun SongListItem(
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: ((Song) -> Unit)? = null  // null = ocultar el botón
 ) {
+    val currentOnSongSelected by rememberUpdatedState(onSongSelected)
+    val currentOnFavoriteToggle by rememberUpdatedState(onFavoriteToggle)
+    val currentOnAddToPlaylist by rememberUpdatedState(onAddToPlaylist)
+
     val bgColor = if (isSelected) SelectedItemBgColor else Color.Transparent
 
     Row(
@@ -117,7 +121,7 @@ fun SongListItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(bgColor)
-            .clickable { onSongSelected(song) }
+            .clickable { currentOnSongSelected(song) }
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -154,7 +158,7 @@ fun SongListItem(
             )
         }
 
-        IconButton(onClick = { onFavoriteToggle(song) }) {
+        IconButton(onClick = { currentOnFavoriteToggle(song) }) {
             Icon(
                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = "Favorito",
@@ -165,7 +169,7 @@ fun SongListItem(
 
         // FIX #11: solo mostrar si hay una acción real asignada
         if (onAddToPlaylist != null) {
-            IconButton(onClick = { onAddToPlaylist(song) }) {
+            IconButton(onClick = { currentOnAddToPlaylist?.invoke(song) }) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = "Mas opciones",

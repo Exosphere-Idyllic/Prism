@@ -9,6 +9,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.example.melodyplayer.data.ArtworkInterceptor
 import com.example.melodyplayer.data.MusicRepository
+import com.example.melodyplayer.data.ThumbnailManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +54,9 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
             } catch (e: Exception) {
                 Log.w("MainApplication", "Failed to cleanup old cache directory", e)
             }
+
+            // Pre-warm thumbnail directory initialization & migration on Dispatchers.IO
+            ThumbnailManager.prewarm(this@MainApplication)
         }
 
         repository = MusicRepository(this, applicationScope)

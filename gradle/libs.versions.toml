@@ -1,6 +1,6 @@
 [versions]
 androidGradlePlugin = "9.2.1"
-androidxCore = "1.18.0"
+androidxCore = "1.19.0"
 androidxLifecycle = "2.10.0"
 androidxActivity = "1.13.0"
 androidxComposeBom = "2026.03.01"
@@ -25,9 +25,10 @@ kotlin-metadata = "2.4.10"
 ksp = "2.3.10"
 androidxWork = "2.10.2"
 androidxMetricsPerformance = "1.0.0-beta01"
-
+androidxCoreSplashScreen = "1.2.0"
 
 [libraries]
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidxCoreSplashScreen" }
 androidx-metrics-performance = { module = "androidx.metrics:metrics-performance", version.ref = "androidxMetricsPerformance" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }

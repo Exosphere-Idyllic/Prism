@@ -2,6 +2,8 @@ package com.example.melodyplayer.data
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 
@@ -20,6 +22,18 @@ object ThumbnailManager {
     /** Cached directory — resolved once, reused forever. */
     @Volatile
     private var cachedDir: File? = null
+
+    /**
+     * Pre-warms the thumbnail directory initialization and migration on [Dispatchers.IO].
+     * Call this during app startup to avoid hitting synchronous disk I/O on the main thread.
+     */
+    suspend fun prewarm(context: Context) = withContext(Dispatchers.IO) {
+        try {
+            getThumbnailDir(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to prewarm thumbnail directory", e)
+        }
+    }
 
     /**
      * Returns the persistent thumbnail directory, creating it if necessary.

@@ -169,23 +169,20 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 // Look up in controllerSongs (the window currently loaded in ExoPlayer)
-                // then fall back to the full library so next/previous always resolves.
-                val song = controllerSongs.find { it.id == mediaItem?.mediaId }
-                    ?: repository.allSongs.value.find { it.id == mediaItem?.mediaId }
-                _uiState.value = _uiState.value.copy(currentSong = song)
-                _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
+                val songId = mediaItem?.mediaId
+                val song = controllerSongs.find { it.id == songId }
 
-                if (song != null && activePlaylist.isNotEmpty()) {
-                    val currentIndex = controllerSongs.indexOfFirst { it.id == song.id }
-                    if (currentIndex != -1) {
-                        val threshold = 5
-                        val isSeek = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
-                        val nearEdge = currentIndex < threshold || currentIndex >= controllerSongs.size - threshold
-                        if (isSeek || nearEdge) {
-                            val immediate = isSeek || currentIndex < 2 || currentIndex >= controllerSongs.size - 2
-                            shiftWindow(controller, song, immediate = immediate)
+                if (song != null) {
+                    updateCurrentSong(song, controller, reason)
+                } else if (songId != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val dbSong = repository.getSongById(songId)
+                        withContext(Dispatchers.Main) {
+                            updateCurrentSong(dbSong, controller, reason)
                         }
                     }
+                } else {
+                    updateCurrentSong(null, controller, reason)
                 }
             }
 
@@ -196,6 +193,24 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         controller.addListener(listener)
         playerListener = listener
         if (controller.isPlaying) startProgressUpdate()
+    }
+
+    private fun updateCurrentSong(song: Song?, controller: MediaController, reason: Int) {
+        _uiState.value = _uiState.value.copy(currentSong = song)
+        _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
+
+        if (song != null && activePlaylist.isNotEmpty()) {
+            val currentIndex = controllerSongs.indexOfFirst { it.id == song.id }
+            if (currentIndex != -1) {
+                val threshold = 5
+                val isSeek = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+                val nearEdge = currentIndex < threshold || currentIndex >= controllerSongs.size - threshold
+                if (isSeek || nearEdge) {
+                    val immediate = isSeek || currentIndex < 2 || currentIndex >= controllerSongs.size - 2
+                    shiftWindow(controller, song, immediate = immediate)
+                }
+            }
+        }
     }
 
     private fun buildPlaybackWindow(song: Song, playlist: List<Song>, windowSize: Int = 50): Pair<List<Song>, Int> {
@@ -278,13 +293,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             val listToUse = if (playlistSongs.isNotEmpty()) {
                 playlistSongs
             } else {
-                val cached = repository.allSongs.value
-                if (cached.isNotEmpty()) {
-                    cached
-                } else {
-                    val dbSongs = withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
-                    dbSongs
-                }
+                withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
             }
             activePlaylist = listToUse
 

@@ -90,6 +90,9 @@ abstract class SongDao {
     @Query("SELECT * FROM songs WHERE albumId = :albumId")
     abstract suspend fun getSongsByAlbumSync(albumId: Long): List<Song>
 
+    @Query("SELECT * FROM songs WHERE id = :id")
+    abstract suspend fun getSongByIdSync(id: String): Song?
+
     @Query("SELECT * FROM songs WHERE artist = :artist")
     abstract suspend fun getSongsByArtistSync(artist: String): List<Song>
 
@@ -108,7 +111,7 @@ abstract class SongDao {
 
     @Query(
         """
-        SELECT 0 AS id, artist AS name, COUNT(*) AS songCount, 
+        SELECT artist AS name, COUNT(*) AS songCount, 
                COUNT(DISTINCT albumId) AS albumCount
         FROM songs
         GROUP BY artist
@@ -137,6 +140,9 @@ interface AlbumDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(album: Album)
 
+    @Query("DELETE FROM albums WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Query("DELETE FROM albums WHERE id = :id")
     suspend fun deleteById(id: Long)
 
@@ -158,8 +164,11 @@ interface ArtistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(artist: Artist)
 
-    @Query("DELETE FROM artists WHERE id = :id")
-    suspend fun deleteById(id: Long)
+    @Query("DELETE FROM artists WHERE name IN (:names)")
+    suspend fun deleteByNames(names: List<String>)
+
+    @Query("DELETE FROM artists WHERE name = :name")
+    suspend fun deleteByName(name: String)
 
     @Query("DELETE FROM artists")
     suspend fun deleteAll()
@@ -238,6 +247,9 @@ interface PlaylistDao {
     @Transaction
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId")
     suspend fun clearPlaylistSongs(playlistId: Long)
+
+    @Query("DELETE FROM playlist_songs WHERE songId IN (:songIds)")
+    suspend fun deletePlaylistSongsForSongIds(songIds: List<String>)
 }
 
 @Database(

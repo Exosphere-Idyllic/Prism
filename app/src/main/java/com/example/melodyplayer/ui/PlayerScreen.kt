@@ -65,13 +65,14 @@ fun PlayerScreen(
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val currentOnBack by rememberUpdatedState(onBack)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = { currentOnBack() }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Volver",
@@ -92,10 +93,15 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val onPlayPauseToggle = remember(viewModel) { { viewModel.togglePlayPause() } }
-            val onNext = remember(viewModel) { { viewModel.next() } }
-            val onPrevious = remember(viewModel) { { viewModel.previous() } }
-            val onSeek = remember(viewModel) { { ms: Long -> viewModel.seekTo(ms) } }
+            val onPlayPauseToggleState by rememberUpdatedState { viewModel.togglePlayPause() }
+            val onNextState by rememberUpdatedState { viewModel.next() }
+            val onPreviousState by rememberUpdatedState { viewModel.previous() }
+            val onSeekState by rememberUpdatedState { ms: Long -> viewModel.seekTo(ms) }
+
+            val onPlayPauseToggle = remember { { onPlayPauseToggleState() } }
+            val onNext = remember { { onNextState() } }
+            val onPrevious = remember { { onPreviousState() } }
+            val onSeek = remember { { ms: Long -> onSeekState(ms) } }
 
             PlayerCard(
                 currentSong = currentSong,

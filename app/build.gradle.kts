@@ -8,11 +8,11 @@ plugins {
 
 android {
     namespace = "com.example.melodyplayer"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.example.melodyplayer"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
     }
@@ -53,6 +53,7 @@ dependencies {
 
   // Core Android dependencies
   implementation(libs.androidx.core.ktx)
+  implementation(libs.androidx.core.splashscreen)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
 

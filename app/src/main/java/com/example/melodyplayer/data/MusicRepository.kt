@@ -7,7 +7,9 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 /**
  * Main entry point for the data layer.
@@ -49,9 +51,9 @@ class MusicRepository(private val app: Application, private val scope: Coroutine
      * Most UI components already have the [Song] object; this is only used for
      * cross-referencing media IDs.
      */
-    suspend fun getSongById(id: String?): Song? {
-        if (id == null) return null
-        return songDao.getSongByIdSync(id)
+    suspend fun getSongById(id: String?): Song? = withContext(Dispatchers.IO) {
+        if (id == null) return@withContext null
+        songDao.getSongByIdSync(id)
     }
 
     fun startObserving() = scannerManager.startObserving()

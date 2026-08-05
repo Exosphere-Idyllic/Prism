@@ -57,37 +57,41 @@ class ThumbnailWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val pendingEntries = java.util.concurrent.ConcurrentLinkedQueue<ThumbnailCacheEntry>()
 
         coroutineScope {
-            for ((albumId, song) in missingAlbums) {
-                launch(limitedDispatcher) {
-                    val file128 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 128)
-                    val file256 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 256)
+            missingAlbums.entries.chunked(10).forEach { batch ->
+                batch.map { (albumId, song) ->
+                    launch(limitedDispatcher) {
+                        val file128 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 128)
+                        val file256 = ThumbnailManager.getAlbumThumbnailFile(applicationContext, albumId, 256)
 
-                    val entriesToInsert = mutableListOf<ThumbnailCacheEntry>()
+                        val entriesToInsert = mutableListOf<ThumbnailCacheEntry>()
 
-                    if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
-                        // Files already on disk but not registered in Room — add them.
-                        listOf(128, 256).forEach { size ->
-                            entriesToInsert.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
-                        }
-                        Log.d(TAG, "Album $albumId already on disk, registering in Room")
-                    } else {
-                        val sizes = ThumbnailHelper.generateWebpFromUri(
-                            applicationContext, song.artworkUri, file128, file256, albumId
-                        )
-                        listOf(128, 256).forEach { size ->
-                            if (sizes.contains(size)) {
+                        if (file128.exists() && file128.length() > 0 && file256.exists() && file256.length() > 0) {
+                            // Files already on disk but not registered in Room — add them.
+                            listOf(128, 256).forEach { size ->
                                 entriesToInsert.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
                             }
+                            Log.d(TAG, "Album $albumId already on disk, registering in Room")
+                        } else {
+                            val sizes = ThumbnailHelper.generateWebpFromUri(
+                                applicationContext, song.artworkUri, file128, file256, albumId
+                            )
+                            listOf(128, 256).forEach { size ->
+                                if (sizes.contains(size)) {
+                                    entriesToInsert.add(ThumbnailCacheEntry("album_${albumId}_$size", albumId.toString(), "album", size))
+                                }
+                            }
+                            if (sizes.isEmpty()) {
+                                Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
+                            }
                         }
-                        if (sizes.isEmpty()) {
-                            Log.w(TAG, "Failed to generate thumbnail for albumId=$albumId artworkUri=${song.artworkUri}")
-                        }
-                    }
 
-                    if (entriesToInsert.isNotEmpty()) {
-                        pendingEntries.addAll(entriesToInsert)
+                        if (entriesToInsert.isNotEmpty()) {
+                            pendingEntries.addAll(entriesToInsert)
+                        }
                     }
-                }
+                }.forEach { it.join() }
+                // Throttling delay between batches to release disk/CPU for active UI
+                kotlinx.coroutines.delay(50)
             }
         }
 
