@@ -21,14 +21,4 @@ class MainActivity : ComponentActivity() {
       MelodyPlayerTheme { Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MainNavigation() } }
     }
   }
-
-  override fun onResume() {
-    super.onResume()
-    PerformanceMonitor.start(this)
-  }
-
-  override fun onPause() {
-    PerformanceMonitor.stop()
-    super.onPause()
-  }
 }

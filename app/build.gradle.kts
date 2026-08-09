@@ -117,8 +117,6 @@ dependencies {
   // WorkManager
   implementation(libs.androidx.work.runtime)
 
-  // Performance monitoring (JankStats)
-  implementation(libs.androidx.metrics.performance)
 
   // Immutable Collections for Compose stability
   implementation(libs.kotlinx.collections.immutable)

@@ -27,7 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.melodyplayer.R
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
@@ -64,7 +66,7 @@ fun MiniPlayer(
             ) {
                 SongArtwork(
                     song = song,
-                    contentDescription = "Mini player art",
+                    contentDescription = stringResource(R.string.cd_mini_player_art),
                     size = 128,
                     crossfade = false,
                     iconSize = 20.dp,
@@ -105,7 +107,7 @@ fun MiniPlayer(
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = "Play/Pause",
+                        contentDescription = stringResource(R.string.cd_play_pause),
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
                     )

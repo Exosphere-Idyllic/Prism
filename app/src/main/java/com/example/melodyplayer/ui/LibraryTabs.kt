@@ -23,8 +23,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.example.melodyplayer.R
 import com.example.melodyplayer.data.Album
 import com.example.melodyplayer.data.Artist
+import com.example.melodyplayer.data.FAVORITES_PLAYLIST_NAME
 import com.example.melodyplayer.data.PlaylistWithCount
 
 @Composable
@@ -75,7 +78,7 @@ fun AlbumGridItem(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${album.songCount} canciones",
+                text = stringResource(R.string.song_count_format, album.songCount),
                 color = Color(0xFFA5B4FC),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
@@ -131,16 +134,16 @@ fun PlaylistListItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${playlist.songCount} canciones",
+                    text = stringResource(R.string.song_count_format, playlist.songCount),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 12.sp
                 )
             }
-            if (playlist.name != "Favoritas") {
+            if (playlist.name != FAVORITES_PLAYLIST_NAME) {
                 IconButton(onClick = onDelete) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Eliminar",
+                        contentDescription = stringResource(R.string.cd_delete),
                         tint = Color(0xFFEF4444).copy(alpha = 0.8f),
                         modifier = Modifier.size(20.dp)
                     )
@@ -195,7 +198,7 @@ fun ArtistListItem(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${artist.albumCount} álbumes • ${artist.songCount} canciones",
+                    text = stringResource(R.string.artist_albums_songs_count, artist.albumCount, artist.songCount),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 12.sp
                 )

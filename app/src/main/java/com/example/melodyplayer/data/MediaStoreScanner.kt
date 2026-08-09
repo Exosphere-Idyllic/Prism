@@ -51,7 +51,6 @@ class MediaStoreScannerImpl(
 
     private val songDao = database.songDao()
     private val playlistDao = database.playlistDao()
-    private val thumbnailCacheDao = database.thumbnailCacheDao()
     private val metadataUpdater = IncrementalMetadataUpdater(database)
 
     private val _isLoading = MutableStateFlow(false)
@@ -203,7 +202,6 @@ class MediaStoreScannerImpl(
                         if (toDelete.isNotEmpty()) {
                             toDelete.chunked(200).forEach { chunk ->
                                 songDao.deleteSongsByIds(chunk)
-                                thumbnailCacheDao.deleteSongEntries(chunk)
                                 playlistDao.deletePlaylistSongsForSongIds(chunk)
                             }
                         }
@@ -220,37 +218,11 @@ class MediaStoreScannerImpl(
                 }
 
                 onScanCompleted(toUpsert, toDelete, isFullScan)
-
-                if (toUpsert.isNotEmpty() || toDelete.isNotEmpty() || isFullScan) {
-                    scheduleThumbnailWorker()
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during scan", e)
             } finally {
                 _isLoading.value = false
             }
-        }
-    }
-
-    private fun scheduleThumbnailWorker() {
-        try {
-            val constraints = Constraints.Builder()
-                .setRequiresBatteryNotLow(true)
-                .setRequiresStorageNotLow(true)
-                .build()
-
-            val workRequest = OneTimeWorkRequestBuilder<ThumbnailWorker>()
-                .setConstraints(constraints)
-                .setInitialDelay(10, TimeUnit.SECONDS)
-                .build()
-
-            WorkManager.getInstance(app).enqueueUniqueWork(
-                "thumbnail_pre_generation",
-                ExistingWorkPolicy.REPLACE,
-                workRequest
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule background thumbnail work", e)
         }
     }
 

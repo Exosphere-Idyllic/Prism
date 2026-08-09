@@ -7,9 +7,9 @@ import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
-import com.example.melodyplayer.data.ArtworkInterceptor
+import com.example.melodyplayer.data.AlbumArtFetcher
 import com.example.melodyplayer.data.MusicRepository
-import com.example.melodyplayer.data.ThumbnailManager
+import com.example.melodyplayer.data.MusicRepositoryImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,11 +22,6 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
     companion object {
         /**
          * Application-scoped [MusicRepository] singleton.
-         *
-         * Keeping the repository in the Application means:
-         *  - A single MediaStore scan runs even across ViewModel re-creations (rotations).
-         *  - The thumbnail in-memory Sets survive config changes without re-loading.
-         *  - The [ArtworkInterceptor] always has direct access to the live Sets.
          */
         lateinit var repository: MusicRepository
             private set
@@ -34,16 +29,12 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
 
     /**
      * Long-lived scope tied to the application process — never cancelled.
-     * Explicit [Dispatchers.Default] avoids relying on the implicit EmptyCoroutineContext default.
      */
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
 
-        // Clean up old volatile cache directory asynchronously on first launch.
-        // Moved here from AppDatabase to avoid a dependency from the DB layer
-        // back up to the Application layer.
         applicationScope.launch(Dispatchers.IO) {
             try {
                 val oldCacheDir = File(cacheDir, "album_art")
@@ -54,13 +45,9 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
             } catch (e: Exception) {
                 Log.w("MainApplication", "Failed to cleanup old cache directory", e)
             }
-
-            // Pre-warm thumbnail directory initialization & migration on Dispatchers.IO
-            ThumbnailManager.prewarm(this@MainApplication)
         }
 
-        repository = MusicRepository(this, applicationScope)
-        // Start MediaStore observation immediately so the first ViewModel attach is instant.
+        repository = MusicRepositoryImpl(this, applicationScope)
         repository.startObserving()
     }
 
@@ -68,7 +55,7 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
         return ImageLoader.Builder(context)
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.20) // 20% de RAM para carátulas
+                    .maxSizePercent(context, 0.20) // 20% RAM for artwork
                     .build()
             }
             .diskCache {
@@ -79,13 +66,12 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
                             .absolutePath
                             .toPath()
                     )
-                    .maxSizeBytes(50L * 1024 * 1024) // 50 MB en disco
+                    .maxSizeBytes(50L * 1024 * 1024) // 50 MB on disk
                     .build()
             }
-            // Centralises WebP-cache → MediaStore fallback logic.
-            // Eliminates the need to propagate hasWebp flags through Compose.
             .components {
-                add(ArtworkInterceptor(repository))
+                add(AlbumArtFetcher.SongFactory())
+                add(AlbumArtFetcher.AlbumFactory())
             }
             .build()
     }

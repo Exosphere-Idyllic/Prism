@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
+import com.example.melodyplayer.R
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
@@ -37,11 +40,11 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
 
 
-enum class LibraryTab(val title: String) {
-    Biblioteca("Biblioteca"),
-    Albumes("Álbumes"),
-    Playlists("Playlists"),
-    Artistas("Artistas")
+enum class LibraryTab(@StringRes val titleRes: Int) {
+    Biblioteca(R.string.tab_library),
+    Albumes(R.string.tab_albums),
+    Playlists(R.string.tab_playlists),
+    Artistas(R.string.tab_artists)
 }
 
 @Composable
@@ -151,7 +154,7 @@ fun SongListScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Prism",
+                    text = stringResource(R.string.app_name),
                     color = Color.White,
                     fontSize = 32.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -165,7 +168,7 @@ fun SongListScreen(
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
                         Text(
-                            text = "$totalSongs canciones",
+                            text = stringResource(R.string.song_count_format, totalSongs),
                             color = Color(0xFFA5B4FC),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -205,7 +208,7 @@ fun SongListScreen(
                         onClick = { selectedTab = tab },
                         text = {
                             Text(
-                                text = tab.title,
+                                text = stringResource(tab.titleRes),
                                 fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Medium,
                                 fontSize = 14.sp,
                             )
@@ -288,7 +291,7 @@ fun SongListScreen(
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Nueva Playlist", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text(stringResource(R.string.new_playlist_title), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
 

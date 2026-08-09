@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
+const val FAVORITES_PLAYLIST_NAME = "Favoritas"
+
 class PlaylistRepository(private val database: AppDatabase) {
 
     private val playlistDao = database.playlistDao()
@@ -16,11 +18,11 @@ class PlaylistRepository(private val database: AppDatabase) {
     val playlistsWithCountsFlow = playlistDao.getAllPlaylistsWithCounts()
 
     fun getFavoriteSongIds(): Flow<Set<String>> =
-        playlistDao.getPlaylistSongIdsFlow("Favoritas").map { it.toSet() }
+        playlistDao.getPlaylistSongIdsFlow(FAVORITES_PLAYLIST_NAME).map { it.toSet() }
 
     suspend fun toggleFavorite(song: Song) = withContext(Dispatchers.IO) {
-        val favId = getOrCreatePlaylist("Favoritas")
-        val isFav = playlistDao.getPlaylistSongIdsFlow("Favoritas").map { it.contains(song.id) }.first()
+        val favId = getOrCreatePlaylist(FAVORITES_PLAYLIST_NAME)
+        val isFav = playlistDao.getPlaylistSongIdsFlow(FAVORITES_PLAYLIST_NAME).map { it.contains(song.id) }.first()
         if (isFav) {
             playlistDao.deletePlaylistSong(favId, song.id)
         } else {

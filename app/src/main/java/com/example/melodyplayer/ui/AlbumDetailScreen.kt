@@ -26,7 +26,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.melodyplayer.R
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
@@ -76,7 +78,7 @@ fun AlbumDetailScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { currentOnBack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back), tint = Color.White)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
@@ -104,7 +106,7 @@ fun AlbumDetailScreen(
                     AlbumArtwork(
                         albumId = albumId,
                         coverUri = songs.firstOrNull()?.artworkUri ?: "",
-                        contentDescription = "Carátula del álbum",
+                        contentDescription = stringResource(R.string.cd_album_art),
                         size = 256,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -119,7 +121,7 @@ fun AlbumDetailScreen(
                     modifier = Modifier.padding(horizontal = 24.dp)
                 )
                 Text(
-                    text = songs.firstOrNull()?.artist ?: "Artista Desconocido",
+                    text = songs.firstOrNull()?.artist ?: stringResource(R.string.unknown_artist),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 14.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -133,7 +135,7 @@ fun AlbumDetailScreen(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Reproducir Álbum")
+                    Text(stringResource(R.string.play_album))
                 }
             }
 

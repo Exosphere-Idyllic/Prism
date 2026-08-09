@@ -19,7 +19,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.melodyplayer.R
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.data.Song
 
@@ -33,10 +35,10 @@ fun AddToPlaylistDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Añadir a Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.add_to_playlist_title), color = Color.White, fontWeight = FontWeight.Bold) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 250.dp)) {
-                Text("Selecciona una playlist para añadir \"${song.title}\":", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                Text(stringResource(R.string.select_playlist_for_song, song.title), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(12.dp))
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -62,7 +64,7 @@ fun AddToPlaylistDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar", color = Color(0xFFA5B4FC)) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel), color = Color(0xFFA5B4FC)) }
         },
         containerColor = Color(0xFF1E1E2C)
     )
@@ -77,10 +79,10 @@ fun CreatePlaylistDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nueva Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.new_playlist_title), color = Color.White, fontWeight = FontWeight.Bold) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text("Escribe el nombre de la nueva playlist:", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                Text(stringResource(R.string.enter_playlist_name), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(
                     modifier = Modifier
@@ -90,7 +92,7 @@ fun CreatePlaylistDialog(
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     if (text.isEmpty()) {
-                        Text("Nombre de la playlist...", color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
+                        Text(stringResource(R.string.playlist_name_hint), color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
                     }
                     BasicTextField(
                         value = text,
@@ -112,11 +114,11 @@ fun CreatePlaylistDialog(
                     }
                 }
             ) {
-                Text("Crear", color = Color(0xFF818CF8), fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.create), color = Color(0xFF818CF8), fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White.copy(alpha = 0.5f)) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel), color = Color.White.copy(alpha = 0.5f)) }
         },
         containerColor = Color(0xFF1E1E2C)
     )

@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
+import com.example.melodyplayer.R
 import com.example.melodyplayer.data.Song
 import kotlinx.collections.immutable.ImmutableSet
 
@@ -127,7 +129,7 @@ fun SongListItem(
     ) {
         SongArtwork(
             song = song,
-            contentDescription = "Album art",
+            contentDescription = stringResource(R.string.cd_album_art),
             size = 128,
             crossfade = false,
             iconSize = 24.dp,
@@ -161,7 +163,7 @@ fun SongListItem(
         IconButton(onClick = { currentOnFavoriteToggle(song) }) {
             Icon(
                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                contentDescription = "Favorito",
+                contentDescription = stringResource(R.string.cd_favorite),
                 tint = if (isFavorite) Color(0xFFEF4444) else InactiveIconTint,
                 modifier = Modifier.size(20.dp)
             )
@@ -172,7 +174,7 @@ fun SongListItem(
             IconButton(onClick = { currentOnAddToPlaylist?.invoke(song) }) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
-                    contentDescription = "Mas opciones",
+                    contentDescription = stringResource(R.string.cd_more_options),
                     tint = Color.White.copy(alpha = 0.45f),
                     modifier = Modifier.size(20.dp)
                 )

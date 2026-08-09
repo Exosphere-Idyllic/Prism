@@ -1,14 +1,24 @@
 package com.example.melodyplayer.data
 
-import android.net.Uri
-import coil3.intercept.Interceptor
-import coil3.request.ImageResult
-import coil3.request.ImageRequest
+import android.content.ContentUris
+import android.content.Context
+import android.media.MediaMetadataRetriever
+import android.os.Build
+import android.provider.MediaStore
+import androidx.core.net.toUri
+import coil3.ImageLoader
+import coil3.decode.DataSource
+import coil3.decode.ImageSource
+import coil3.fetch.FetchResult
+import coil3.fetch.Fetcher
+import coil3.fetch.SourceFetchResult
+import coil3.request.Options
+import okio.Buffer
+import okio.FileSystem
+import java.io.InputStream
 
 /**
  * Request params for a song artwork image.
- * Passed as the data payload in [ImageRequest]; the [ArtworkInterceptor] resolves
- * the actual URI at load time by checking whether a cached WebP exists on disk.
  */
 data class SongArtworkParams(
     val song: Song,
@@ -25,69 +35,122 @@ data class AlbumArtworkParams(
 )
 
 /**
- * Coil [Interceptor] that centralises the "WebP cache → MediaStore fallback" logic.
+ * Coil [Fetcher] that loads album artwork using a multi-strategy approach:
+ *  1. [ContentResolver.loadThumbnail] via Albums URI (API 29+)
+ *  2. [ContentResolver.openInputStream] on the artwork URI
+ *  3. Embedded ID3 artwork via [MediaMetadataRetriever]
  *
- * Instead of propagating boolean `hasWebp` flags through the entire Compose tree
- * (which causes N recompositions per thumbnail generated), we:
- *   1. Accept typed [SongArtworkParams] / [AlbumArtworkParams] as the request data.
- *   2. Check the in-memory Sets in [MusicRepository] to see if a WebP exists.
- *   3. Redirect the data to the local WebP file URI if available, or fall back to the
- *      original MediaStore / album-art URI.
- *
- * This makes artwork loading completely reactive without any StateFlow observations in
- * the UI — Coil automatically retries the request when the image key changes.
+ * All caching (memory + disk), resizing, and bitmap management is delegated
+ * entirely to Coil's built-in pipeline, eliminating custom thumbnail classes.
  */
-class ArtworkInterceptor(private val repository: MusicRepository) : Interceptor {
+class AlbumArtFetcher(
+    private val albumId: Long,
+    private val artworkUri: String,
+    private val mediaUri: String?,
+    private val context: Context,
+) : Fetcher {
 
-    override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
-        val request = chain.request
-        return when (val data = request.data) {
-            is SongArtworkParams -> {
-                val resolvedUri = resolveSongUri(data)
-                val newRequest = request.newBuilder().data(resolvedUri).build()
-                chain.withRequest(newRequest).proceed()
+    override suspend fun fetch(): FetchResult? {
+        // Strategy 1: loadThumbnail via Albums content URI (API 29+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && albumId > 0) {
+            val albumsUri = ContentUris.withAppendedId(
+                MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId
+            )
+            try {
+                val stream = context.contentResolver.openInputStream(albumsUri)
+                if (stream != null) {
+                    return streamToResult(stream)
+                }
+            } catch (_: Exception) { /* fall through */ }
+
+            // Try the raw artworkUri via openInputStream
+            if (artworkUri.isNotEmpty()) {
+                try {
+                    val stream = context.contentResolver.openInputStream(artworkUri.toUri())
+                    if (stream != null) {
+                        return streamToResult(stream)
+                    }
+                } catch (_: Exception) { /* fall through */ }
             }
-            is AlbumArtworkParams -> {
-                val resolvedUri = resolveAlbumUri(data)
-                val newRequest = request.newBuilder().data(resolvedUri).build()
-                chain.withRequest(newRequest).proceed()
-            }
-            else -> chain.proceed()
+        }
+
+        // Strategy 2: openInputStream on the artworkUri
+        if (artworkUri.isNotEmpty()) {
+            try {
+                val stream = context.contentResolver.openInputStream(artworkUri.toUri())
+                if (stream != null) {
+                    return streamToResult(stream)
+                }
+            } catch (_: Exception) { /* fall through */ }
+        }
+
+        // Strategy 3: Extract embedded artwork via MediaMetadataRetriever
+        val uriForRetriever = if (!mediaUri.isNullOrEmpty()) mediaUri
+            else if (artworkUri.isNotEmpty()) artworkUri
+            else return null
+
+        return extractEmbeddedArtwork(uriForRetriever)
+    }
+
+    private fun extractEmbeddedArtwork(uri: String): FetchResult? {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri.toUri())
+            val picture = retriever.embeddedPicture ?: return null
+            val buffer = Buffer().write(picture)
+            return SourceFetchResult(
+                source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
+                mimeType = "image/jpeg",
+                dataSource = DataSource.DISK
+            )
+        } catch (_: Exception) {
+            return null
+        } finally {
+            try { retriever.release() } catch (_: Exception) { }
         }
     }
 
-    private fun resolveSongUri(params: SongArtworkParams): Any? {
-        val song = params.song
-        val size = params.size
-        val sizeKey = if (size <= 128) 128 else 256
-
-        if (song.albumId > 0) {
-            val set = if (sizeKey == 128) repository.albumThumbnail128Ids.value else repository.albumThumbnail256Ids.value
-            val file = ThumbnailManager.getAlbumThumbnailFile(
-                repository.appContext, song.albumId, sizeKey
-            )
-            if (set.contains(song.albumId) || (file.exists() && file.length() > 0)) {
-                return Uri.fromFile(file)
+    private fun streamToResult(stream: InputStream): SourceFetchResult {
+        val buffer = Buffer().apply {
+            stream.use { inputStream ->
+                val bytes = inputStream.readBytes()
+                write(bytes)
             }
         }
-
-        // Fall back to original artwork URI
-        return if (song.artworkUri.isNotEmpty()) song.artworkUri else null
+        return SourceFetchResult(
+            source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
+            mimeType = null,
+            dataSource = DataSource.DISK
+        )
     }
 
-    private fun resolveAlbumUri(params: AlbumArtworkParams): Any? {
-        val sizeKey = if (params.size <= 128) 128 else 256
-
-        if (params.albumId > 0) {
-            val set = if (sizeKey == 128) repository.albumThumbnail128Ids.value else repository.albumThumbnail256Ids.value
-            val file = ThumbnailManager.getAlbumThumbnailFile(
-                repository.appContext, params.albumId, sizeKey
+    class SongFactory : Fetcher.Factory<SongArtworkParams> {
+        override fun create(
+            data: SongArtworkParams,
+            options: Options,
+            imageLoader: ImageLoader
+        ): Fetcher {
+            return AlbumArtFetcher(
+                albumId = data.song.albumId,
+                artworkUri = data.song.artworkUri,
+                mediaUri = data.song.mediaUri,
+                context = options.context
             )
-            if (set.contains(params.albumId) || (file.exists() && file.length() > 0)) {
-                return Uri.fromFile(file)
-            }
         }
+    }
 
-        return if (params.coverUri.isNotEmpty()) params.coverUri else null
+    class AlbumFactory : Fetcher.Factory<AlbumArtworkParams> {
+        override fun create(
+            data: AlbumArtworkParams,
+            options: Options,
+            imageLoader: ImageLoader
+        ): Fetcher {
+            return AlbumArtFetcher(
+                albumId = data.albumId,
+                artworkUri = data.coverUri,
+                mediaUri = null,
+                context = options.context
+            )
+        }
     }
 }

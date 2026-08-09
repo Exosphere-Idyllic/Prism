@@ -3,18 +3,15 @@ package com.example.melodyplayer
 import android.app.Application
 import android.content.ComponentName
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.core.net.toUri
-import com.example.melodyplayer.data.AppDatabase
 import com.example.melodyplayer.data.Song
 import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,7 +32,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     }
 
     private val app = getApplication<Application>()
-    private val database = AppDatabase.getDatabase(application)
     private val repository = MainApplication.repository
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
@@ -53,9 +49,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         .map { it.isPlaying }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-    private var activePlaylist: List<Song> = emptyList()
-    private var controllerSongs: List<Song> = emptyList()
-    private var pendingControllerSongs: List<Song>? = null
+    @Volatile private var activePlaylist: List<Song> = emptyList()
+    @Volatile private var controllerSongs: List<Song> = emptyList()
+    @Volatile private var pendingControllerSongs: List<Song>? = null
     private var lastSeekTime = 0L
 
     private var mediaController: MediaController? = null
@@ -104,23 +100,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         val currentSongId = currentSong?.id
 
         viewModelScope.launch(Dispatchers.Default) {
-            val mediaItems = songs.map { song ->
-                val artworkUri = if (song.id == currentSongId && song.artworkUri.isNotEmpty())
-                    song.artworkUri.toUri()
-                else
-                    null
-                MediaItem.Builder()
-                    .setMediaId(song.id)
-                    .setUri(song.mediaUri.toUri())
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(song.title)
-                            .setArtist(song.artist)
-                            .setArtworkUri(artworkUri)
-                            .build()
-                    )
-                    .build()
-            }
+            val mediaItems = MediaItemBuilder.buildMediaItems(songs, currentSongId)
             withContext(Dispatchers.Main) {
                 try {
                     controller.setMediaItems(mediaItems)
@@ -147,7 +127,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 Log.e(TAG, "MediaController init failed", e)
             }
-        }, MoreExecutors.directExecutor())
+        }, ContextCompat.getMainExecutor(app))
     }
 
     private fun setupController(controller: MediaController) {
@@ -252,23 +232,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             // but gives cancellation a real chance to work.
             delay(if (immediate) 60L else 300L)
 
-            val mediaItems = windowSongs.map { song ->
-                val artworkUri = if (song.id == currentSongId && song.artworkUri.isNotEmpty())
-                    song.artworkUri.toUri()
-                else
-                    null
-                MediaItem.Builder()
-                    .setMediaId(song.id)
-                    .setUri(song.mediaUri.toUri())
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(song.title)
-                            .setArtist(song.artist)
-                            .setArtworkUri(artworkUri)
-                            .build()
-                    )
-                    .build()
-            }
+            val mediaItems = MediaItemBuilder.buildMediaItems(windowSongs, currentSongId)
             withContext(Dispatchers.Main) {
                 try {
                     val currentPos = controller.currentPosition
@@ -293,7 +257,7 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             val listToUse = if (playlistSongs.isNotEmpty()) {
                 playlistSongs
             } else {
-                withContext(Dispatchers.IO) { database.songDao().getAllSongs() }
+                repository.getSongsWindow(song.id)
             }
             activePlaylist = listToUse
 

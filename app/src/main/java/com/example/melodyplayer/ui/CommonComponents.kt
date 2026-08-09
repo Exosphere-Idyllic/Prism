@@ -23,10 +23,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.melodyplayer.R
 
 /**
  * Extension modifier that paints a sweeping shimmer behind its content.
@@ -78,7 +80,7 @@ fun SearchBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Default.Search,
-                contentDescription = "Buscar",
+                contentDescription = stringResource(R.string.cd_search),
                 tint = Color.White.copy(alpha = 0.35f),
                 modifier = Modifier.size(20.dp)
             )
@@ -86,7 +88,7 @@ fun SearchBar(
             Box(modifier = Modifier.weight(1f)) {
                 if (query.isEmpty()) {
                     Text(
-                        text = "Buscar canciones o artistas...",
+                        text = stringResource(R.string.search_placeholder_songs_artists),
                         color = Color.White.copy(alpha = 0.3f),
                         fontSize = 14.sp
                     )
@@ -179,14 +181,14 @@ fun PermissionRequest(
         }
         Spacer(modifier = Modifier.height(20.dp))
         Text(
-            text = "Acceso a tu música",
+            text = stringResource(R.string.permission_title),
             color = Color.White,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Prism necesita acceso a tu almacenamiento\npara mostrar tus canciones locales.",
+            text = stringResource(R.string.permission_desc),
             color = Color.White.copy(alpha = 0.5f),
             fontSize = 14.sp,
             lineHeight = 20.sp,
@@ -204,7 +206,7 @@ fun PermissionRequest(
                 .height(50.dp)
         ) {
             Text(
-                text = "Conceder permiso",
+                text = stringResource(R.string.grant_permission),
                 color = Color.White,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp
@@ -228,7 +230,7 @@ fun EmptyLibrary(modifier: Modifier = Modifier) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "No se encontraron canciones",
+            text = stringResource(R.string.no_songs_found),
             color = Color.White.copy(alpha = 0.4f),
             fontSize = 16.sp
         )
@@ -250,7 +252,7 @@ fun NoSearchResults(query: String, modifier: Modifier = Modifier) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "Sin resultados para \"$query\"",
+            text = stringResource(R.string.no_search_results_query, query),
             color = Color.White.copy(alpha = 0.4f),
             fontSize = 15.sp
         )

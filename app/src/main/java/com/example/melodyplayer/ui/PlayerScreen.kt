@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
+import androidx.compose.material3.SliderColors
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,11 +23,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.melodyplayer.R
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
@@ -75,13 +78,13 @@ fun PlayerScreen(
                 IconButton(onClick = { currentOnBack() }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Volver",
+                        contentDescription = stringResource(R.string.cd_back),
                         tint = Color.White.copy(alpha = 0.8f)
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    text = "REPRODUCIENDO",
+                    text = stringResource(R.string.now_playing_uppercase),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -149,7 +152,7 @@ fun PlayerCard(
             ) { crossfadeSong ->
                 SongArtwork(
                     song = crossfadeSong,
-                    contentDescription = "Album Art",
+                    contentDescription = stringResource(R.string.cd_album_art),
                     size = 256,
                     crossfade = true,
                     iconSize = 80.dp,
@@ -164,7 +167,7 @@ fun PlayerCard(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = currentSong?.title ?: "No Song Playing",
+                text = currentSong?.title ?: stringResource(R.string.no_song_playing),
                 color = Color.White,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
@@ -173,7 +176,7 @@ fun PlayerCard(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = currentSong?.artist ?: "Unknown Artist",
+                text = currentSong?.artist ?: stringResource(R.string.unknown_artist),
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
@@ -206,16 +209,8 @@ fun PlaybackProgress(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val progress by progressStateFlow.collectAsStateWithLifecycle(ProgressState())
-    val currentPosition = progress.currentPosition
-    val duration = progress.duration
-
     var isDragging by remember { mutableStateOf(value = false) }
     var dragPosition by remember { mutableFloatStateOf(0f) }
-    val totalDuration = remember(duration) { duration.coerceAtLeast(1L) }
-
-    val progressFraction = if (isDragging) dragPosition
-    else (currentPosition.toFloat() / totalDuration).coerceIn(0f, 1f)
 
     val sliderColors = SliderDefaults.colors(
         thumbColor = Color(0xFFA5B4FC),
@@ -224,36 +219,82 @@ fun PlaybackProgress(
     )
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Slider(
-            value = progressFraction,
-            onValueChange = { fraction ->
+        // Isolate the slider's state reading to avoid recomposing the outer Column
+        ProgressSlider(
+            progressStateFlow = progressStateFlow,
+            isDragging = isDragging,
+            dragPosition = dragPosition,
+            sliderColors = sliderColors,
+            onDragStart = { fraction ->
                 isDragging = true
                 dragPosition = fraction
             },
-            onValueChangeFinished = {
+            onDragEnd = {
                 isDragging = false
-                onSeek((dragPosition * totalDuration).toLong())
             },
-            colors = sliderColors,
-            modifier = Modifier.fillMaxWidth()
+            onSeek = onSeek
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = formatTime(if (isDragging) (dragPosition * totalDuration).toLong() else currentPosition),
-                color = Color.White.copy(alpha = 0.5f),
-                fontSize = 12.sp
-            )
-            Text(
-                text = formatTime(duration),
-                color = Color.White.copy(alpha = 0.5f),
-                fontSize = 12.sp
-            )
-        }
+        ProgressTimestamps(
+            progressStateFlow = progressStateFlow,
+            isDragging = isDragging,
+            dragPosition = dragPosition
+        )
+    }
+}
+
+@Composable
+private fun ProgressSlider(
+    progressStateFlow: StateFlow<ProgressState>,
+    isDragging: Boolean,
+    dragPosition: Float,
+    sliderColors: SliderColors,
+    onDragStart: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onSeek: (Long) -> Unit,
+) {
+    val progress by progressStateFlow.collectAsStateWithLifecycle(ProgressState())
+    val totalDuration = progress.duration.coerceAtLeast(1L)
+
+    val progressFraction = if (isDragging) dragPosition
+    else (progress.currentPosition.toFloat() / totalDuration).coerceIn(0f, 1f)
+
+    Slider(
+        value = progressFraction,
+        onValueChange = { fraction -> onDragStart(fraction) },
+        onValueChangeFinished = {
+            onDragEnd()
+            onSeek((dragPosition * totalDuration).toLong())
+        },
+        colors = sliderColors,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+@Composable
+private fun ProgressTimestamps(
+    progressStateFlow: StateFlow<ProgressState>,
+    isDragging: Boolean,
+    dragPosition: Float,
+) {
+    val progress by progressStateFlow.collectAsStateWithLifecycle(ProgressState())
+    val totalDuration = progress.duration.coerceAtLeast(1L)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = formatTime(if (isDragging) (dragPosition * totalDuration).toLong() else progress.currentPosition),
+            color = Color.White.copy(alpha = 0.5f),
+            fontSize = 12.sp
+        )
+        Text(
+            text = formatTime(progress.duration),
+            color = Color.White.copy(alpha = 0.5f),
+            fontSize = 12.sp
+        )
     }
 }
 
@@ -273,7 +314,7 @@ fun PlaybackControls(
         IconButton(onClick = onPrevious, modifier = Modifier.size(56.dp)) {
             Icon(
                 imageVector = Icons.Default.SkipPrevious,
-                contentDescription = "Previous",
+                contentDescription = stringResource(R.string.cd_previous),
                 tint = Color.White,
                 modifier = Modifier.size(32.dp)
             )
@@ -294,7 +335,7 @@ fun PlaybackControls(
         ) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                contentDescription = "Play/Pause",
+                contentDescription = stringResource(R.string.cd_play_pause),
                 tint = Color.White,
                 modifier = Modifier.size(36.dp)
             )
@@ -303,7 +344,7 @@ fun PlaybackControls(
         IconButton(onClick = onNext, modifier = Modifier.size(56.dp)) {
             Icon(
                 imageVector = Icons.Default.SkipNext,
-                contentDescription = "Next",
+                contentDescription = stringResource(R.string.cd_next),
                 tint = Color.White,
                 modifier = Modifier.size(32.dp)
             )

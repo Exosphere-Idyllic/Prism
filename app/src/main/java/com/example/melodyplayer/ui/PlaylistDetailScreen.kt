@@ -24,7 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.melodyplayer.R
 import com.example.melodyplayer.LibraryViewModel
 import com.example.melodyplayer.PlaybackViewModel
 import com.example.melodyplayer.data.Song
@@ -75,7 +77,7 @@ fun PlaylistDetailScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { currentOnBack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back), tint = Color.White)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
@@ -116,7 +118,7 @@ fun PlaylistDetailScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "${songs.size} canciones",
+                    text = stringResource(R.string.song_count_format, songs.size),
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 14.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -130,7 +132,7 @@ fun PlaylistDetailScreen(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Reproducir Playlist")
+                    Text(stringResource(R.string.play_playlist))
                 }
             }
 
@@ -170,7 +172,7 @@ fun PlaylistDetailScreen(
                         IconButton(onClick = { onRemove(song) }) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = "Quitar",
+                                contentDescription = stringResource(R.string.cd_remove),
                                 tint = Color.Red.copy(alpha = 0.5f),
                                 modifier = Modifier.size(18.dp)
                             )

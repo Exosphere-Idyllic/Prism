@@ -11,6 +11,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.paging.PagingSource
+import com.example.melodyplayer.R
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 
@@ -55,9 +56,6 @@ abstract class SongDao {
     abstract suspend fun getSongLibraryInfo(): List<SongLibraryInfo>
 
     @Query("SELECT * FROM songs ORDER BY title ASC")
-    abstract fun getAllSongsFlow(): Flow<List<Song>>
-
-    @Query("SELECT * FROM songs ORDER BY title ASC")
     abstract fun getAllSongsPaging(): PagingSource<Int, Song>
 
     @Query("SELECT * FROM songs WHERE title LIKE :query OR artist LIKE :query OR album LIKE :query ORDER BY title ASC")
@@ -71,9 +69,6 @@ abstract class SongDao {
 
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     abstract suspend fun deleteSongsByIds(ids: List<String>)
-
-    @Query("SELECT * FROM songs WHERE artworkUri != ''")
-    abstract suspend fun getAllSongsWithArtwork(): List<Song>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertAll(songs: List<Song>)
@@ -98,6 +93,12 @@ abstract class SongDao {
 
     @Query("SELECT COUNT(*) FROM songs")
     abstract suspend fun getSongCount(): Int
+
+    @Query("SELECT rowid FROM songs WHERE id = :songId")
+    abstract suspend fun getSongRowNumber(songId: String): Long?
+
+    @Query("SELECT * FROM songs ORDER BY title ASC LIMIT :windowSize OFFSET :offset")
+    abstract suspend fun getSongsWindow(offset: Int, windowSize: Int): List<Song>
 
     @Query(
         """
@@ -253,8 +254,8 @@ interface PlaylistDao {
 }
 
 @Database(
-    entities = [Song::class, Album::class, Artist::class, Playlist::class, PlaylistSong::class, ThumbnailCacheEntry::class],
-    version = 7,
+    entities = [Song::class, Album::class, Artist::class, Playlist::class, PlaylistSong::class],
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -262,7 +263,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun albumDao(): AlbumDao
     abstract fun artistDao(): ArtistDao
     abstract fun playlistDao(): PlaylistDao
-    abstract fun thumbnailCacheDao(): ThumbnailCacheDao
 
     companion object {
         @Volatile
@@ -270,33 +270,13 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                // Cleanup old volatile cache directory.
-                // IMPORTANT: this runs off-thread. getDatabase() is called synchronously
-                // from MusicRepository's constructor, which runs in MainApplication.onCreate()
-                // — i.e. on the MAIN thread during cold start. deleteRecursively() walks and
-                // deletes the directory entry-by-entry, which used to block the very first
-                // frame (observed as a 2s+ Davey right at app launch). This is pure
-                // housekeeping for an obsolete directory, so it doesn't need to block
-                // database creation at all.
-                val appContext = context.applicationContext
-                Thread {
-                    try {
-                        val oldCacheDir = File(appContext.cacheDir, "album_art")
-                        if (oldCacheDir.exists()) {
-                            oldCacheDir.deleteRecursively()
-                            Log.d("AppDatabase", "Cleaned up old cache directory")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("AppDatabase", "Failed to cleanup old cache directory", e)
-                    }
-                }.start()
-
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "melody_player_db"
+                    context.getString(R.string.database_name)
                 )
-                    .fallbackToDestructiveMigration()
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
                 instance
