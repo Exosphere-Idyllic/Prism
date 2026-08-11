@@ -46,12 +46,6 @@ class MusicRepositoryImpl(
         songDao.getAllSongs()
     }
 
-    override suspend fun getSongsWindow(currentSongId: String, windowSize: Int): List<Song> = withContext(Dispatchers.IO) {
-        val rowNumber = songDao.getSongRowNumber(currentSongId) ?: 0L
-        val offset = (rowNumber - windowSize / 2).coerceAtLeast(0).toInt()
-        songDao.getSongsWindow(offset, windowSize)
-    }
-
     override fun startObserving() = scannerManager.startObserving()
     override fun triggerScan() = scannerManager.triggerScan()
     override fun stopObserving() = scannerManager.stopObserving()

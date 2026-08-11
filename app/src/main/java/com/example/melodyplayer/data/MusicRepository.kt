@@ -17,7 +17,6 @@ interface MusicRepository {
 
     suspend fun getSongById(id: String?): Song?
     suspend fun getAllSongs(): List<Song>
-    suspend fun getSongsWindow(currentSongId: String, windowSize: Int = 50): List<Song>
 
     fun startObserving()
     fun triggerScan()

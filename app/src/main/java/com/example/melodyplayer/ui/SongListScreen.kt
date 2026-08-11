@@ -150,28 +150,22 @@ fun SongListScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 20.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    color = Color.White,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f)
-                )
-                if (totalSongs > 0) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0xFF6366F1).copy(alpha = 0.15f))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        color = Color(0xFFF1F5F9),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    if (totalSongs > 0) {
                         Text(
                             text = stringResource(R.string.song_count_format, totalSongs),
-                            color = Color(0xFFA5B4FC),
+                            color = Color(0xFF64748B),
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -191,15 +185,16 @@ fun SongListScreen(
             SecondaryScrollableTabRow(
                 selectedTabIndex = selectedTab.ordinal,
                 containerColor = Color.Transparent,
-                contentColor = Color.White,
+                contentColor = Color(0xFFF1F5F9),
                 edgePadding = 24.dp,
                 divider = {},
-                        indicator = {
-                            TabRowDefaults.SecondaryIndicator(
-                                Modifier.tabIndicatorOffset(selectedTab.ordinal),
-                                color = Color(0xFF6366F1),
-                            )
-                        },
+                indicator = {
+                    TabRowDefaults.SecondaryIndicator(
+                        Modifier.tabIndicatorOffset(selectedTab.ordinal),
+                        color = Color(0xFF6366F1),
+                        height = 2.dp
+                    )
+                },
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             ) {
                 LibraryTab.entries.forEach { tab ->
@@ -209,12 +204,12 @@ fun SongListScreen(
                         text = {
                             Text(
                                 text = stringResource(tab.titleRes),
-                                fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Medium,
+                                fontWeight = if (selectedTab == tab) FontWeight.SemiBold else FontWeight.Normal,
                                 fontSize = 14.sp,
                             )
                         },
-                        selectedContentColor = Color.White,
-                        unselectedContentColor = Color.White.copy(alpha = 0.5f)
+                        selectedContentColor = Color(0xFFF1F5F9),
+                        unselectedContentColor = Color(0xFF64748B)
                     )
                 }
             }

@@ -94,12 +94,6 @@ abstract class SongDao {
     @Query("SELECT COUNT(*) FROM songs")
     abstract suspend fun getSongCount(): Int
 
-    @Query("SELECT rowid FROM songs WHERE id = :songId")
-    abstract suspend fun getSongRowNumber(songId: String): Long?
-
-    @Query("SELECT * FROM songs ORDER BY title ASC LIMIT :windowSize OFFSET :offset")
-    abstract suspend fun getSongsWindow(offset: Int, windowSize: Int): List<Song>
-
     @Query(
         """
         SELECT albumId AS id, MIN(album) AS albumName, MIN(artist) AS artist, 

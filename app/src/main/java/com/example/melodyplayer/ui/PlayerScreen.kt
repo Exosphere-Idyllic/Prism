@@ -1,10 +1,11 @@
 package com.example.melodyplayer.ui
 
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +37,16 @@ import com.example.melodyplayer.ProgressState
 import com.example.melodyplayer.data.Song
 import kotlinx.coroutines.flow.StateFlow
 
+// ─── Color tokens ────────────────────────────────────────────────────────────
+private val BgTop     = Color(0xFF0D1117)
+private val BgBottom  = Color(0xFF070B10)
+private val Accent    = Color(0xFF6366F1)
+private val AccentSoft = Color(0xFF818CF8)
+private val Surface1  = Color(0xFF141B2D)
+private val TextPrimary   = Color(0xFFF1F5F9)
+private val TextSecondary = Color(0xFF64748B)
+private val TrackBg   = Color(0xFF1E293B)
+
 @Composable
 fun PlayerScreen(
     viewModel: PlaybackViewModel,
@@ -44,15 +56,8 @@ fun PlayerScreen(
     val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlayingState.collectAsStateWithLifecycle()
 
-    // Static dark-to-darker gradient — no colour extraction needed.
-    // The AnimatedColor approach was removed because _currentSongColor was never populated.
     val backgroundBrush = remember {
-        val bgColor1 = Color(0xFF0F172A)
-        val bgColor2 = Color(0xFF020617)
-        val topColor = Color(0xFF1E1B4B).copy(alpha = 0.45f)
-        Brush.verticalGradient(
-            colors = listOf(topColor, bgColor1, bgColor2),
-        )
+        Brush.verticalGradient(colors = listOf(BgTop, BgBottom))
     }
 
     Box(
@@ -68,34 +73,43 @@ fun PlayerScreen(
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // ── Top bar ────────────────────────────────────────────────────
             val currentOnBack by rememberUpdatedState(onBack)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(onClick = { currentOnBack() }) {
+                IconButton(
+                    onClick = { currentOnBack() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Surface1)
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.cd_back),
-                        tint = Color.White.copy(alpha = 0.8f)
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                Spacer(modifier = Modifier.weight(1f))
                 Text(
                     text = stringResource(R.string.now_playing_uppercase),
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = TextSecondary,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.sp
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.5.sp
                 )
-                Spacer(modifier = Modifier.weight(1f))
-                Spacer(modifier = Modifier.size(48.dp))
+                // Balance spacer
+                Spacer(modifier = Modifier.size(40.dp))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
+            // ── Stable callbacks ───────────────────────────────────────────
             val onPlayPauseToggleState by rememberUpdatedState { viewModel.togglePlayPause() }
             val onNextState by rememberUpdatedState { viewModel.next() }
             val onPreviousState by rememberUpdatedState { viewModel.previous() }
@@ -106,99 +120,73 @@ fun PlayerScreen(
             val onPrevious = remember { { onPreviousState() } }
             val onSeek = remember { { ms: Long -> onSeekState(ms) } }
 
-            PlayerCard(
-                currentSong = currentSong,
-                isPlaying = isPlaying,
-                progressStateFlow = viewModel.progressState,
-                onPlayPauseToggle = onPlayPauseToggle,
-                onNext = onNext,
-                onPrevious = onPrevious,
-                onSeek = onSeek
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
-fun PlayerCard(
-    currentSong: Song?,
-    isPlaying: Boolean,
-    progressStateFlow: StateFlow<ProgressState>,
-    onPlayPauseToggle: () -> Unit,
-    onNext: () -> Unit,
-    onPrevious: () -> Unit,
-    onSeek: (Long) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(elevation = 16.dp, shape = RoundedCornerShape(24.dp)),
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.06f)),
-        shape = RoundedCornerShape(24.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+            // ── Artwork ────────────────────────────────────────────────────
             Crossfade(
                 targetState = currentSong,
-                animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+                animationSpec = tween(400, easing = FastOutSlowInEasing),
                 label = "albumArtCrossfade"
             ) { crossfadeSong ->
-                SongArtwork(
-                    song = crossfadeSong,
-                    contentDescription = stringResource(R.string.cd_album_art),
-                    size = 256,
-                    crossfade = true,
-                    iconSize = 80.dp,
+                Box(
                     modifier = Modifier
-                        .size(240.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.05f))
-                        .shadow(8.dp, shape = RoundedCornerShape(20.dp))
-                )
+                        .size(300.dp)
+                        .shadow(32.dp, RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Surface1)
+                ) {
+                    SongArtwork(
+                        song = crossfadeSong,
+                        contentDescription = stringResource(R.string.cd_album_art),
+                        size = 512,
+                        crossfade = true,
+                        iconSize = 80.dp,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
+            // ── Song info ──────────────────────────────────────────────────
             Text(
                 text = currentSong?.title ?: stringResource(R.string.no_song_playing),
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = currentSong?.artist ?: stringResource(R.string.unknown_artist),
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
+                color = TextSecondary,
+                fontSize = 14.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
+            // ── Progress ───────────────────────────────────────────────────
             PlaybackProgress(
-                progressStateFlow = progressStateFlow,
+                progressStateFlow = viewModel.progressState,
                 onSeek = onSeek
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
+            // ── Controls ───────────────────────────────────────────────────
             PlaybackControls(
                 isPlaying = isPlaying,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious
             )
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -209,17 +197,16 @@ fun PlaybackProgress(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isDragging by remember { mutableStateOf(value = false) }
+    var isDragging by remember { mutableStateOf(false) }
     var dragPosition by remember { mutableFloatStateOf(0f) }
 
     val sliderColors = SliderDefaults.colors(
-        thumbColor = Color(0xFFA5B4FC),
-        activeTrackColor = Color(0xFF6366F1),
-        inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+        thumbColor = AccentSoft,
+        activeTrackColor = Accent,
+        inactiveTrackColor = TrackBg
     )
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Isolate the slider's state reading to avoid recomposing the outer Column
         ProgressSlider(
             progressStateFlow = progressStateFlow,
             isDragging = isDragging,
@@ -229,9 +216,7 @@ fun PlaybackProgress(
                 isDragging = true
                 dragPosition = fraction
             },
-            onDragEnd = {
-                isDragging = false
-            },
+            onDragEnd = { isDragging = false },
             onSeek = onSeek
         )
         ProgressTimestamps(
@@ -287,12 +272,12 @@ private fun ProgressTimestamps(
     ) {
         Text(
             text = formatTime(if (isDragging) (dragPosition * totalDuration).toLong() else progress.currentPosition),
-            color = Color.White.copy(alpha = 0.5f),
+            color = TextSecondary,
             fontSize = 12.sp
         )
         Text(
             text = formatTime(progress.duration),
-            color = Color.White.copy(alpha = 0.5f),
+            color = TextSecondary,
             fontSize = 12.sp
         )
     }
@@ -306,47 +291,80 @@ fun PlaybackControls(
     onPrevious: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val playButtonBrush = remember {
+        Brush.linearGradient(colors = listOf(AccentSoft, Accent))
+    }
+
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onPrevious, modifier = Modifier.size(56.dp)) {
+        // Previous
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(Surface1)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onPrevious
+                ),
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Default.SkipPrevious,
                 contentDescription = stringResource(R.string.cd_previous),
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
+                tint = TextPrimary,
+                modifier = Modifier.size(28.dp)
             )
         }
-        Spacer(modifier = Modifier.width(24.dp))
-        val playButtonBrush = remember {
-            Brush.radialGradient(
-                colors = listOf(Color(0xFF818CF8), Color(0xFF4F46E5))
-            )
-        }
+
+        Spacer(modifier = Modifier.width(20.dp))
+
+        // Play / Pause
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(68.dp)
+                .shadow(16.dp, CircleShape)
                 .clip(CircleShape)
                 .background(brush = playButtonBrush)
-                .clickable { onPlayPauseToggle() },
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onPlayPauseToggle
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = stringResource(R.string.cd_play_pause),
                 tint = Color.White,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(34.dp)
             )
         }
-        Spacer(modifier = Modifier.width(24.dp))
-        IconButton(onClick = onNext, modifier = Modifier.size(56.dp)) {
+
+        Spacer(modifier = Modifier.width(20.dp))
+
+        // Next
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(Surface1)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onNext
+                ),
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Default.SkipNext,
                 contentDescription = stringResource(R.string.cd_next),
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
+                tint = TextPrimary,
+                modifier = Modifier.size(28.dp)
             )
         }
     }

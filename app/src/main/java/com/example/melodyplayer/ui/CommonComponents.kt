@@ -73,28 +73,28 @@ fun SearchBar(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.05f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF141B2D))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Default.Search,
                 contentDescription = stringResource(R.string.cd_search),
-                tint = Color.White.copy(alpha = 0.35f),
-                modifier = Modifier.size(20.dp)
+                tint = Color(0xFF64748B),
+                modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Box(modifier = Modifier.weight(1f)) {
                 if (query.isEmpty()) {
                     Text(
                         text = stringResource(R.string.search_placeholder_songs_artists),
-                        color = Color.White.copy(alpha = 0.3f),
+                        color = Color(0xFF475569),
                         fontSize = 14.sp
                     )
                 }
                 val textStyle = remember {
-                    TextStyle(color = Color.White, fontSize = 14.sp)
+                    TextStyle(color = Color(0xFFF1F5F9), fontSize = 14.sp)
                 }
                 BasicTextField(
                     value = query,

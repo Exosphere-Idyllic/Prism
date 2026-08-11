@@ -49,72 +49,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         .map { it.isPlaying }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-    @Volatile private var activePlaylist: List<Song> = emptyList()
-    @Volatile private var controllerSongs: List<Song> = emptyList()
-    @Volatile private var pendingControllerSongs: List<Song>? = null
+
+    // Songs currently loaded in the ExoPlayer queue (used for next/prev lookup)
+    @Volatile private var queuedSongs: List<Song> = emptyList()
     private var lastSeekTime = 0L
 
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var progressJob: Job? = null
-    private var shiftWindowJob: Job? = null
     private var playerListener: Player.Listener? = null
-
 
     init {
         initializeController()
-        // Songs are loaded lazily in playSong() only when playback is triggered.
-        // This avoids the startup bottleneck of loading 597+ rows into memory.
     }
 
-    private fun syncStateFromController(controller: MediaController, songs: List<Song>) {
-        val currentMediaId = controller.currentMediaItem?.mediaId
-        val song = songs.find { it.id == currentMediaId }
-        _uiState.value = _uiState.value.copy(
-            currentSong = song ?: songs.firstOrNull(),
-            isPlaying = controller.isPlaying
-        )
-        _progressState.value = ProgressState(
-            currentPosition = controller.currentPosition.coerceAtLeast(0L),
-            duration = controller.duration.coerceAtLeast(0L)
-        )
-        if (activePlaylist.isEmpty() && controller.mediaItemCount > 0) {
-            activePlaylist = songs
-        }
-    }
-
-    private fun updateControllerMediaItems(
-        controller: MediaController,
-        songs: List<Song>,
-        currentSong: Song? = null,
-        onComplete: () -> Unit = {}
-    ) {
-        if ((pendingControllerSongs ?: controllerSongs) == songs && controller.mediaItemCount > 0) {
-            onComplete()
-            return
-        }
-        pendingControllerSongs = songs
-
-        // Only the current song needs artwork immediately (notification, mini-player).
-        // All other items in the window get null artwork to avoid a 50-item decode burst.
-        val currentSongId = currentSong?.id
-
-        viewModelScope.launch(Dispatchers.Default) {
-            val mediaItems = MediaItemBuilder.buildMediaItems(songs, currentSongId)
-            withContext(Dispatchers.Main) {
-                try {
-                    controller.setMediaItems(mediaItems)
-                    if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
-                    controllerSongs = songs
-                    pendingControllerSongs = null
-                    syncStateFromController(controller, songs)
-                    onComplete()
-                } catch (e: Exception) {
-                    Log.e(TAG, "MediaController setMediaItems failed in updateControllerMediaItems", e)
-                }
-            }
-        }
-    }
+    // ── Controller setup ──────────────────────────────────────────────────────
 
     private fun initializeController() {
         val sessionToken = SessionToken(app, ComponentName(app, PlaybackService::class.java))
@@ -133,12 +82,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     private fun setupController(controller: MediaController) {
         playerListener?.let { controller.removeListener(it) }
 
-        // Do NOT push all songs into ExoPlayer on startup — that IPC call with
-        // thousands of MediaItems is the primary cause of the 50s+ startup freeze.
-        // Songs are loaded lazily only when the user actually triggers playback.
-        // If the service already has items (resumed session), just sync UI state.
+        // If the service already has items (resumed session), restore UI state.
         if (controller.mediaItemCount > 0) {
-            syncStateFromController(controller, controllerSongs)
+            syncStateFromController(controller)
         }
 
         val listener = object : Player.Listener {
@@ -148,26 +94,28 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Look up in controllerSongs (the window currently loaded in ExoPlayer)
                 val songId = mediaItem?.mediaId
-                val song = controllerSongs.find { it.id == songId }
-
+                val song = queuedSongs.find { it.id == songId }
                 if (song != null) {
-                    updateCurrentSong(song, controller, reason)
+                    _uiState.value = _uiState.value.copy(currentSong = song)
+                    _progressState.value = _progressState.value.copy(
+                        duration = controller.duration.coerceAtLeast(0L)
+                    )
                 } else if (songId != null) {
+                    // Fallback: look up the song in the database (e.g. after a session restore)
                     viewModelScope.launch(Dispatchers.IO) {
                         val dbSong = repository.getSongById(songId)
                         withContext(Dispatchers.Main) {
-                            updateCurrentSong(dbSong, controller, reason)
+                            _uiState.value = _uiState.value.copy(currentSong = dbSong)
                         }
                     }
-                } else {
-                    updateCurrentSong(null, controller, reason)
                 }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
+                _progressState.value = _progressState.value.copy(
+                    duration = controller.duration.coerceAtLeast(0L)
+                )
             }
         }
         controller.addListener(listener)
@@ -175,96 +123,61 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         if (controller.isPlaying) startProgressUpdate()
     }
 
-    private fun updateCurrentSong(song: Song?, controller: MediaController, reason: Int) {
-        _uiState.value = _uiState.value.copy(currentSong = song)
-        _progressState.value = _progressState.value.copy(duration = controller.duration.coerceAtLeast(0L))
-
-        if (song != null && activePlaylist.isNotEmpty()) {
-            val currentIndex = controllerSongs.indexOfFirst { it.id == song.id }
-            if (currentIndex != -1) {
-                val threshold = 5
-                val isSeek = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
-                val nearEdge = currentIndex < threshold || currentIndex >= controllerSongs.size - threshold
-                if (isSeek || nearEdge) {
-                    val immediate = isSeek || currentIndex < 2 || currentIndex >= controllerSongs.size - 2
-                    shiftWindow(controller, song, immediate = immediate)
-                }
-            }
-        }
+    private fun syncStateFromController(controller: MediaController) {
+        val currentMediaId = controller.currentMediaItem?.mediaId
+        val song = queuedSongs.find { it.id == currentMediaId }
+        _uiState.value = _uiState.value.copy(
+            currentSong = song,
+            isPlaying = controller.isPlaying
+        )
+        _progressState.value = ProgressState(
+            currentPosition = controller.currentPosition.coerceAtLeast(0L),
+            duration = controller.duration.coerceAtLeast(0L)
+        )
     }
 
-    private fun buildPlaybackWindow(song: Song, playlist: List<Song>, windowSize: Int = 50): Pair<List<Song>, Int> {
-        val index = playlist.indexOfFirst { it.id == song.id }
-        if (index == -1) return Pair(listOf(song), 0)
+    // ── Playback commands ─────────────────────────────────────────────────────
 
-        val half = windowSize / 2
-        val start = (index - half).coerceAtLeast(0)
-        val end = (index + half).coerceAtMost(playlist.size)
-        val windowSongs = playlist.subList(start, end)
-        val windowIndex = index - start
-        return Pair(windowSongs, windowIndex)
-    }
-
-    private fun shiftWindow(controller: MediaController, currentSong: Song, immediate: Boolean = false) {
-        val playlist = activePlaylist
-        if (playlist.isEmpty()) return
-
-        val (windowSongs, windowIndex) = buildPlaybackWindow(currentSong, playlist)
-        if ((pendingControllerSongs ?: controllerSongs) == windowSongs) return
-
-        // Cancel any in-flight shift that hasn't run yet (debounce for rapid skips).
-        shiftWindowJob?.cancel()
-        pendingControllerSongs = windowSongs
-
-        // Only the current song needs artwork immediately; the rest carry null to
-        // avoid a ~50-item artwork-decode burst on every window slide.
-        val currentSongId = currentSong.id
-
-        shiftWindowJob = viewModelScope.launch(Dispatchers.Default) {
-            // Absorb rapid consecutive transitions before doing any real work.
-            // IMPORTANT: even "immediate" transitions (seek / near playlist edge) get
-            // a small real debounce window here. Without it, cancelling the previous
-            // shiftWindowJob (above) almost never has time to take effect — dispatch to
-            // Dispatchers.Default and the hop to Main happen in microseconds, so a burst
-            // of rapid skips (e.g. double/triple-tapping "next") ends up queuing several
-            // blocking controller.setMediaItems() IPC calls back-to-back on the Main
-            // thread instead of collapsing into one. 60ms is imperceptible to the user
-            // but gives cancellation a real chance to work.
-            delay(if (immediate) 60L else 300L)
-
-            val mediaItems = MediaItemBuilder.buildMediaItems(windowSongs, currentSongId)
-            withContext(Dispatchers.Main) {
-                try {
-                    val currentPos = controller.currentPosition
-                    val wasPlaying = controller.isPlaying
-                    controller.setMediaItems(mediaItems, windowIndex, currentPos)
-                    if (wasPlaying) {
-                        controller.play()
-                    }
-                    controllerSongs = windowSongs
-                    pendingControllerSongs = null
-                } catch (e: Exception) {
-                    Log.e(TAG, "MediaController setMediaItems failed in shiftWindow", e)
-                }
-            }
-        }
-    }
-
+    /**
+     * Plays [song] in the context of [playlistSongs].
+     *
+     * If [playlistSongs] is empty, fetches the full library sorted by title (the
+     * same order shown in the UI) on a background thread, so there is no Main-thread
+     * stall and the correct song is always at the correct index.
+     *
+     * Fix: previously getSongsWindow used SQLite rowid (unordered) to compute an
+     * offset into a title-sorted query, causing a completely wrong set of songs to
+     * be loaded, which is why a random song played and Next/Previous were broken.
+     */
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList()) {
         val controller = mediaController ?: return
 
         viewModelScope.launch {
-            val listToUse = if (playlistSongs.isNotEmpty()) {
-                playlistSongs
-            } else {
-                repository.getSongsWindow(song.id)
+            // Fetch / use the context playlist on a background thread
+            val songs: List<Song> = withContext(Dispatchers.IO) {
+                playlistSongs.ifEmpty { repository.getAllSongs() }
             }
-            activePlaylist = listToUse
 
-            val (windowSongs, windowIndex) = buildPlaybackWindow(song, listToUse)
-            updateControllerMediaItems(controller, windowSongs, currentSong = song) {
-                controller.seekTo(windowIndex, 0)
-                controller.play()
+            // Find the index of the requested song in the ordered list
+            val startIndex = songs.indexOfFirst { it.id == song.id }
+                .coerceAtLeast(0)
+
+            // Build lightweight MediaItems off the main thread (no bitmap decoding)
+            val mediaItems: List<MediaItem> = withContext(Dispatchers.Default) {
+                MediaItemBuilder.buildMediaItems(songs, song.id)
+            }
+
+            // Switch back to Main for ExoPlayer IPC calls
+            withContext(Dispatchers.Main) {
+                try {
+                    queuedSongs = songs
+                    _uiState.value = _uiState.value.copy(currentSong = song)
+                    controller.setMediaItems(mediaItems, startIndex, 0L)
+                    if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
+                    controller.play()
+                } catch (e: Exception) {
+                    Log.e(TAG, "setMediaItems failed in playSong", e)
+                }
             }
         }
     }
@@ -287,11 +200,15 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         lastSeekTime = System.currentTimeMillis()
     }
 
+    // ── Progress polling ──────────────────────────────────────────────────────
+
     private fun startProgressUpdate() {
         progressJob?.cancel()
         progressJob = viewModelScope.launch {
             while (true) {
                 mediaController?.let {
+                    // Skip update briefly after a manual seek to avoid position
+                    // jumping back before ExoPlayer confirms the new position.
                     if (System.currentTimeMillis() - lastSeekTime > 500) {
                         _progressState.value = _progressState.value.copy(
                             currentPosition = it.currentPosition.coerceAtLeast(0L),
@@ -311,7 +228,6 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         playerListener?.let { mediaController?.removeListener(it) }
         controllerFuture?.let { MediaController.releaseFuture(it) }
         stopProgressUpdate()
-        shiftWindowJob?.cancel()
     }
 }
 
