@@ -1,63 +1,50 @@
-<resources>
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Prism</string>
-    <string name="tab_songs">Canciones</string>
-    <string name="tab_albums">Álbumes</string>
-    <string name="tab_artists">Artistas</string>
+    <string name="tab_library">Library</string>
+    <string name="tab_albums">Albums</string>
     <string name="tab_playlists">Playlists</string>
-    <string name="search_placeholder">Buscar canciones, álbumes...</string>
-    <string name="no_songs_found">No se encontraron canciones</string>
-    <string name="no_albums_found">No se encontraron álbumes</string>
-    <string name="no_artists_found">No se encontraron artistas</string>
-    <string name="no_playlists_found">No hay playlists creadas</string>
-    <string name="create_playlist">Crear Playlist</string>
-    <string name="delete_playlist">Eliminar Playlist</string>
-    <string name="playlist_name_hint">Nombre de la playlist</string>
-    <string name="cancel">Cancelar</string>
-    <string name="confirm">Aceptar</string>
-    <string name="add_to_playlist">Añadir a playlist</string>
-    <string name="remove_from_playlist">Quitar de playlist</string>
-    <string name="play">Reproducir</string>
-    <string name="pause">Pausar</string>
-    <string name="next">Siguiente</string>
-    <string name="previous">Anterior</string>
-    <string name="unknown_artist">Artista desconocido</string>
-    <string name="unknown_album">Álbum desconocido</string>
-    <string name="log_tag_app_database">AppDatabase</string>
-    <string name="cache_dir_album_art">album_art</string>
-    <string name="log_msg_cache_cleanup_success">Cleaned up old cache directory</string>
-    <string name="log_msg_cache_cleanup_failed">Failed to cleanup old cache directory</string>
-    <string name="database_name">melody_player_db</string>
+    <string name="tab_artists">Artists</string>
 
-    <!-- UI Strings extraídos -->
-    <string name="tab_library">Biblioteca</string>
-    <string name="play_album">Reproducir Álbum</string>
-    <string name="play_playlist">Reproducir Playlist</string>
-    <string name="song_count_format">%1$d canciones</string>
-    <string name="artist_albums_songs_count">%1$d álbumes • %2$d canciones</string>
-    <string name="search_placeholder_songs_artists">Buscar canciones o artistas...</string>
-    <string name="permission_title">Acceso a tu música</string>
-    <string name="permission_desc">Prism necesita acceso a tu almacenamiento\npara mostrar tus canciones locales.</string>
-    <string name="grant_permission">Conceder permiso</string>
-    <string name="no_search_results_query">Sin resultados para \"%1$s\"</string>
-    <string name="add_to_playlist_title">Añadir a Playlist</string>
-    <string name="select_playlist_for_song">Selecciona una playlist para añadir \"%1$s\":</string>
-    <string name="new_playlist_title">Nueva Playlist</string>
-    <string name="enter_playlist_name">Escribe el nombre de la nueva playlist:</string>
-    <string name="create">Crear</string>
-    <string name="now_playing_uppercase">REPRODUCIENDO</string>
-    <string name="no_song_playing">No hay canción en reproducción</string>
-    <string name="favorites_playlist_name">Favoritas</string>
+    <string name="no_songs_found">No songs found</string>
+    <string name="no_search_results_query">No results for \"%1$s\"</string>
+    <string name="unknown_artist">Unknown Artist</string>
 
-    <!-- Content Descriptions (Accesibilidad) -->
-    <string name="cd_back">Volver</string>
-    <string name="cd_album_art">Carátula del álbum</string>
-    <string name="cd_mini_player_art">Carátula de reproductor en miniatura</string>
-    <string name="cd_play_pause">Reproducir o pausar</string>
-    <string name="cd_previous">Anterior</string>
-    <string name="cd_next">Siguiente</string>
-    <string name="cd_search">Buscar</string>
-    <string name="cd_favorite">Favorito</string>
-    <string name="cd_more_options">Más opciones</string>
-    <string name="cd_delete">Eliminar</string>
-    <string name="cd_remove">Quitar</string>
+    <string name="play_album">Play Album</string>
+    <string name="play_playlist">Play Playlist</string>
+    <string name="artist_albums_songs_count" tools:ignore="PluralsCandidate">%1$d albums • %2$d songs</string>
+    <plurals name="songs_count">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
+    <string name="search_placeholder_songs_artists">Search songs or artists&#8230;</string>
+
+    <string name="permission_title">Access to your music</string>
+    <string name="permission_desc">Prism needs access to your storage\nto display your local songs.</string>
+    <string name="grant_permission">Grant permission</string>
+
+    <string name="new_playlist_title">New Playlist</string>
+    <string name="enter_playlist_name">Enter name for the new playlist:</string>
+    <string name="playlist_name_hint">Playlist name</string>
+    <string name="add_to_playlist_title">Add to Playlist</string>
+    <string name="select_playlist_for_song">Select a playlist to add \"%1$s\":</string>
+    <string name="create">Create</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="now_playing_uppercase">NOW PLAYING</string>
+    <string name="no_song_playing">No song playing</string>
+    <string name="playlist_favorites">Favorites</string>
+
+    <!-- Content Descriptions (Accessibility) -->
+    <string name="cd_back">Back</string>
+    <string name="cd_album_art">Album art</string>
+    <string name="cd_mini_player_art">Mini player artwork</string>
+    <string name="cd_play_pause">Play or pause</string>
+    <string name="cd_previous">Previous</string>
+    <string name="cd_next">Next</string>
+    <string name="cd_search">Search</string>
+    <string name="cd_favorite">Favorite</string>
+    <string name="cd_more_options">More options</string>
+    <string name="cd_delete">Delete</string>
+    <string name="cd_remove">Remove</string>
 </resources>

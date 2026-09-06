@@ -2,15 +2,14 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-  // alias(libs.plugins.kotlin.android)
   alias(libs.plugins.ksp)
 }
 
 android {
-    namespace = "com.example.melodyplayer"
+    namespace = "com.example.prism"
     compileSdk = 37
     defaultConfig {
-        applicationId = "com.example.melodyplayer"
+        applicationId = "com.example.prism"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
@@ -31,7 +30,7 @@ android {
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 
@@ -44,6 +43,10 @@ android {
 
 kotlin {
     jvmToolchain(17)
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -95,6 +98,7 @@ dependencies {
   implementation(libs.coil.compose)
   implementation(libs.coil.network.okhttp)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.kotlinx.coroutines.android)
 
   // Material Icons Extended
   implementation(libs.androidx.compose.material.icons.extended)
@@ -114,12 +118,26 @@ dependencies {
   implementation(libs.androidx.paging.runtime)
   implementation(libs.androidx.paging.compose)
 
-  // WorkManager
-  implementation(libs.androidx.work.runtime)
-
-
   // Immutable Collections for Compose stability
   implementation(libs.kotlinx.collections.immutable)
+
+  // DataStore Preferences
+  implementation(libs.androidx.datastore.preferences)
+
+  // Dependency Injection (Koin)
+  implementation(libs.koin.android)
+  implementation(libs.koin.androidx.compose)
+
+  // Logging
+  implementation(libs.timber)
+  debugImplementation(libs.leakcanary.android)
+
+  // Testing extensions
+  testImplementation(libs.turbine)
+  testImplementation(libs.mockk)
+  testImplementation(libs.koin.test)
+  testImplementation(libs.koin.test.junit4)
+  testImplementation(libs.robolectric)
 }
 
 

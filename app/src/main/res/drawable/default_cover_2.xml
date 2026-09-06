@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="256dp"
+    android:height="256dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <!-- Background -->
+    <path
+        android:fillColor="#1E1E2C"
+        android:pathData="M0,0h256v256H0z" />
+    <!-- Vinyl record: outer ring -->
+    <path
+        android:fillColor="#806EC6FF"
+        android:pathData="M128,48a80,80 0,1 1,0 160a80,80 0,1 1,0 -160zM128,72a56,56 0,1 0,0 112a56,56 0,1 0,0 -112z" />
+    <!-- Vinyl record: inner ring -->
+    <path
+        android:fillColor="#806EC6FF"
+        android:pathData="M128,100a28,28 0,1 1,0 56a28,28 0,1 1,0 -56zM128,116a12,12 0,1 0,0 24a12,12 0,1 0,0 -24z" />
+</vector>

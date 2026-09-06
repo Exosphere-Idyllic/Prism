@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="app_name">Prism</string>
+    <string name="tab_library">Biblioteca</string>
+    <string name="tab_albums">Álbumes</string>
+    <string name="tab_playlists">Playlists</string>
+    <string name="tab_artists">Artistas</string>
+
+    <string name="no_songs_found">No se encontraron canciones</string>
+    <string name="no_search_results_query">Sin resultados para \"%1$s\"</string>
+    <string name="unknown_artist">Artista desconocido</string>
+
+    <string name="play_album">Reproducir Álbum</string>
+    <string name="play_playlist">Reproducir Playlist</string>
+    <string name="artist_albums_songs_count" tools:ignore="PluralsCandidate">%1$d álbumes • %2$d canciones</string>
+    <plurals name="songs_count" tools:ignore="MissingQuantity">
+        <item quantity="one">%1$d canción</item>
+        <item quantity="other">%1$d canciones</item>
+    </plurals>
+    <string name="search_placeholder_songs_artists">Buscar canciones o artistas&#8230;</string>
+
+    <string name="permission_title">Acceso a tu música</string>
+    <string name="permission_desc">Prism necesita acceso a tu almacenamiento\npara mostrar tus canciones locales.</string>
+    <string name="grant_permission">Conceder permiso</string>
+
+    <string name="new_playlist_title">Nueva Playlist</string>
+    <string name="enter_playlist_name">Escribe el nombre de la nueva playlist:</string>
+    <string name="playlist_name_hint">Nombre de la playlist</string>
+    <string name="add_to_playlist_title">Añadir a Playlist</string>
+    <string name="select_playlist_for_song">Selecciona una playlist para añadir \"%1$s\":</string>
+    <string name="create">Crear</string>
+    <string name="cancel">Cancelar</string>
+
+    <string name="now_playing_uppercase">REPRODUCIENDO</string>
+    <string name="no_song_playing">No hay canción en reproducción</string>
+    <string name="playlist_favorites">Favoritas</string>
+
+    <!-- Content Descriptions (Accesibilidad) -->
+    <string name="cd_back">Volver</string>
+    <string name="cd_album_art">Carátula del álbum</string>
+    <string name="cd_mini_player_art">Carátula de reproductor en miniatura</string>
+    <string name="cd_play_pause">Reproducir o pausar</string>
+    <string name="cd_previous">Anterior</string>
+    <string name="cd_next">Siguiente</string>
+    <string name="cd_search">Buscar</string>
+    <string name="cd_favorite">Favorito</string>
+    <string name="cd_more_options">Más opciones</string>
+    <string name="cd_delete">Eliminar</string>
+    <string name="cd_remove">Quitar</string>
+</resources>

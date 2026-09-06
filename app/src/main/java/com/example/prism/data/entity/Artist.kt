@@ -1,0 +1,13 @@
+package com.example.prism.data.entity
+
+import androidx.compose.runtime.Immutable
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Immutable
+@Entity(tableName = "artists")
+data class Artist(
+    @PrimaryKey val name: String,
+    val songCount: Int,
+    val albumCount: Int,
+)

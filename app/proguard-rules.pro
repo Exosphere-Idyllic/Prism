@@ -1,10 +1,28 @@
 # Add project specific ProGuard rules here.
-# By default, the flags in this file are appended to flags specified
-# in C:\Users\USER\AppData\Local\Android\Sdk\tools\proguard\proguard-android.txt
-# You can edit the include path and order by changing the proguardFiles
-# directive in build.gradle.kts.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools-proguard.html
 
-# Add any custom Keep rules here:
+# Kotlinx Serialization — keep serializer companions and @Serializable types
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class kotlinx.serialization.json.** {
+    *** Companion;
+}
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keep,includedescriptorclasses class com.example.prism.**$$serializer { *; }
+-keepclassmembers class com.example.prism.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.example.prism.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# Room — keep entity constructors and DAO methods
+-keep class com.example.prism.data.entity.** { *; }
+-keep class com.example.prism.data.db.** { *; }
+
+# Timber — strip debug/verbose logs in release
+-assumenosideeffects class timber.log.Timber {
+    public static *** d(...);
+    public static *** v(...);
+}
