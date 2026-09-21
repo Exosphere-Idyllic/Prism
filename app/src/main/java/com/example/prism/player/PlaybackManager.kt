@@ -7,6 +7,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.entity.Song
@@ -40,7 +41,7 @@ class PlaybackManagerImpl(
     private val repository: LibraryRepository,
     private val dispatchers: DispatcherProvider,
     private val scope: CoroutineScope,
-) : PlaybackManager {
+) : PlaybackManager, CustomCommandDispatcher {
 
     companion object {
         /**
@@ -279,6 +280,16 @@ class PlaybackManagerImpl(
     override fun seekTo(positionMs: Long) {
         progressTracker.onSeek(positionMs)
         mediaController?.seekTo(positionMs)
+    }
+
+    override fun sendCustomCommand(action: String, args: android.os.Bundle) {
+        val controller = mediaController
+        if (controller != null) {
+            val command = SessionCommand(action, android.os.Bundle.EMPTY)
+            controller.sendCustomCommand(command, args)
+        } else {
+            Timber.d("MediaController not connected yet; custom command %s delayed", action)
+        }
     }
 
     override fun release() {

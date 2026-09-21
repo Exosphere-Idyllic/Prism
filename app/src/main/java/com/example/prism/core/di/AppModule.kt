@@ -64,6 +64,21 @@ val appModule = module {
         )
     }
 
+    single { com.example.prism.player.effects.EqualizerAudioProcessor() }
+
+    single<com.example.prism.player.CustomCommandDispatcher> {
+        get<PlaybackManager>() as com.example.prism.player.CustomCommandDispatcher
+    }
+
+    single<com.example.prism.player.effects.EqualizerController> {
+        com.example.prism.player.effects.EqualizerControllerImpl(
+            equalizerRepository = get(),
+            commandDispatcher = get(),
+            scope = get(),
+            dispatchers = get(),
+        )
+    }
+
     viewModel {
         LibraryViewModel(
             libraryRepository = get<LibraryRepository>(),

@@ -95,7 +95,7 @@ fun MiniPlayer(
                 SongArtwork(
                     song = song,
                     contentDescription = stringResource(R.string.cd_mini_player_art),
-                    size = 128,
+                    size = 160,
                     crossfade = false,
                     modifier = Modifier
                         .size(44.dp)
