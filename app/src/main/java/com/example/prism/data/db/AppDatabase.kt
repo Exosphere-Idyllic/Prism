@@ -1,6 +1,7 @@
 package com.example.prism.data.db
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -18,8 +19,11 @@ import com.example.prism.data.entity.Song
         Playlist::class,
         PlaylistSong::class,
     ],
-    version = 1,
-    exportSchema = true
+    version = 2,
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2),
+    ],
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
@@ -28,28 +32,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
 
     companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
-
-        fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "music_database",
-                )
-                    .addCallback(object : androidx.room.RoomDatabase.Callback() {
+        fun build(context: Context): AppDatabase =
+            Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                "music_database",
+            )
+                .addCallback(
+                    object : Callback() {
                         override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                             super.onOpen(db)
                             db.execSQL("PRAGMA foreign_keys = ON;")
                         }
-                    })
-                    // TODO: Replace fallbackToDestructiveMigration with proper migrations before v2
-                    .fallbackToDestructiveMigration(dropAllTables = true)
-                    .build()
-                INSTANCE = instance
-                instance
-            }
-        }
+                    },
+                )
+                .build()
     }
 }

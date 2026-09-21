@@ -9,6 +9,8 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
+import androidx.compose.ui.graphics.Brush
+
 private val DarkColorScheme = darkColorScheme(
     primary = AppAccent,
     secondary = AppAccentSoft,
@@ -21,6 +23,14 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = DarkColorScheme
+
+val AppBackgroundBrush: Brush = Brush.verticalGradient(
+    colors = listOf(AppBgDeep, AppBgDeeper, AppBgDarkest)
+)
+
+val PlayerBackgroundBrush: Brush = Brush.verticalGradient(
+    colors = listOf(AppBgTop, AppBgBottom)
+)
 
 @Composable
 fun PrismTheme(

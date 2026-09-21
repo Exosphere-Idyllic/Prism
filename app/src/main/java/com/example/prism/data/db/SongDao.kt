@@ -33,16 +33,18 @@ interface SongDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAllIgnore(songs: List<Song>): List<Long>
 
-    @Query("""
+    @Query(
+        """
         UPDATE songs SET 
             title = :title, artist = :artist, album = :album, albumId = :albumId,
             mediaUri = :mediaUri, artworkUri = :artworkUri, duration = :duration,
             dateModified = :dateModified, track = :track
         WHERE id = :id
-    """)
+        """,
+    )
     suspend fun updateSongPreservingCustomFields(
         id: String, title: String, artist: String, album: String, albumId: Long,
-        mediaUri: String, artworkUri: String, duration: Long, dateModified: Long, track: Int
+        mediaUri: String, artworkUri: String, duration: Long, dateModified: Long, track: Int,
     )
 
     /**
@@ -76,6 +78,12 @@ interface SongDao {
 
     @Query("SELECT * FROM songs WHERE id = :id")
     suspend fun getSongByIdSync(id: String): Song?
+
+    @Query("UPDATE songs SET customLyricsUri = :lyricsUri WHERE id = :id")
+    suspend fun updateCustomLyricsUri(id: String, lyricsUri: String)
+
+    @Query("UPDATE songs SET customArtworkUri = :artworkUri WHERE id = :id")
+    suspend fun updateCustomArtworkUri(id: String, artworkUri: String)
 
     @Query(
         """

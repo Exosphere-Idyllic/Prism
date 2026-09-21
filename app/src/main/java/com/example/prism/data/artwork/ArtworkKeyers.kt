@@ -13,7 +13,9 @@ import coil3.request.Options
  */
 class SongArtworkKeyer : Keyer<SongArtworkParams> {
     override fun key(data: SongArtworkParams, options: Options): String {
-        return "song_art_${data.song.id}_${data.song.dateModified}_${data.song.artworkUri.hashCode()}_${data.song.customArtworkUri.hashCode()}_${data.size}"
+        val customPart = if (data.song.customArtworkUri.isNotEmpty()) "_custom_${data.song.customArtworkUri}" else ""
+        val artPart = if (data.song.artworkUri.isNotEmpty()) "_art_${data.song.artworkUri}" else ""
+        return "song_art_${data.song.id}_${data.song.dateModified}_${data.size}$customPart$artPart"
     }
 }
 
@@ -22,6 +24,8 @@ class SongArtworkKeyer : Keyer<SongArtworkParams> {
  */
 class AlbumArtworkKeyer : Keyer<AlbumArtworkParams> {
     override fun key(data: AlbumArtworkParams, options: Options): String {
-        return "album_art_${data.albumId}_${data.coverUri.hashCode()}_${data.customCoverUri.hashCode()}_${data.size}"
+        val customPart = if (data.customCoverUri.isNotEmpty()) "_custom_${data.customCoverUri}" else ""
+        val coverPart = if (data.coverUri.isNotEmpty()) "_cover_${data.coverUri}" else ""
+        return "album_art_${data.albumId}_${data.size}$customPart$coverPart"
     }
 }

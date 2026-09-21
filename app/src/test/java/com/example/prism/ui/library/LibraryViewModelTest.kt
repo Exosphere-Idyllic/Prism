@@ -2,8 +2,10 @@ package com.example.prism.ui.library
 
 import app.cash.turbine.test
 import com.example.prism.core.util.DispatcherProvider
-import com.example.prism.domain.repository.MusicRepository
 import com.example.prism.data.entity.Song
+import com.example.prism.domain.repository.LibraryRepository
+import com.example.prism.domain.repository.PlaylistRepository
+import com.example.prism.domain.repository.ScannerRepository
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -29,13 +31,22 @@ class LibraryViewModelTest {
         override val io: CoroutineDispatcher = testDispatcher
         override val default: CoroutineDispatcher = testDispatcher
     }
-    private val repository: MusicRepository = mockk(relaxed = true)
+    private val libraryRepository: LibraryRepository = mockk(relaxed = true)
+    private val playlistRepository: PlaylistRepository = mockk(relaxed = true)
+    private val scannerRepository: ScannerRepository = mockk(relaxed = true)
+
+    private fun createViewModel() = LibraryViewModel(
+        libraryRepository = libraryRepository,
+        playlistRepository = playlistRepository,
+        scannerRepository = scannerRepository,
+        dispatchers = testDispatcherProvider,
+    )
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { repository.playlistsWithCountsFlow } returns flowOf(emptyList())
-        every { repository.getFavoriteSongIds() } returns flowOf(emptySet())
+        every { playlistRepository.playlistsWithCountsFlow } returns flowOf(emptyList())
+        every { playlistRepository.getFavoriteSongIds() } returns flowOf(emptySet())
     }
 
     @After
@@ -45,7 +56,7 @@ class LibraryViewModelTest {
 
     @Test
     fun setSearchQuery_updatesSearchQueryFlow() = runTest {
-        val viewModel = LibraryViewModel(repository, dispatchers = testDispatcherProvider)
+        val viewModel = createViewModel()
 
         viewModel.searchQuery.test {
             assertEquals("", awaitItem())
@@ -57,7 +68,7 @@ class LibraryViewModelTest {
 
     @Test
     fun toggleFavorite_delegatesToRepository() = runTest {
-        val viewModel = LibraryViewModel(repository, dispatchers = testDispatcherProvider)
+        val viewModel = createViewModel()
         val song = Song(
             id = "1",
             title = "Viva La Vida",
@@ -73,25 +84,45 @@ class LibraryViewModelTest {
         viewModel.toggleFavorite(song)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        coVerify(exactly = 1) { repository.toggleFavorite(song) }
+        coVerify(exactly = 1) { playlistRepository.toggleFavorite(song) }
     }
 
     @Test
     fun createPlaylist_delegatesToRepository() = runTest {
-        val viewModel = LibraryViewModel(repository, dispatchers = testDispatcherProvider)
+        val viewModel = createViewModel()
 
         viewModel.createPlaylist("Rock Classics")
         testDispatcher.scheduler.advanceUntilIdle()
 
-        coVerify(exactly = 1) { repository.createPlaylist("Rock Classics") }
+        coVerify(exactly = 1) { playlistRepository.createPlaylist("Rock Classics") }
     }
 
     @Test
     fun loadLocalSongs_callsTriggerScan() = runTest {
-        val viewModel = LibraryViewModel(repository, dispatchers = testDispatcherProvider)
+        val viewModel = createViewModel()
 
         viewModel.loadLocalSongs()
 
-        coVerify(exactly = 1) { repository.triggerScan() }
+        coVerify(exactly = 1) { scannerRepository.triggerScan() }
+    }
+
+    @Test
+    fun updateSongArtwork_delegatesToRepository() = runTest {
+        val viewModel = createViewModel()
+
+        viewModel.updateSongArtwork("song-123", "https://example.com/art.jpg")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { libraryRepository.updateSongArtwork("song-123", "https://example.com/art.jpg") }
+    }
+
+    @Test
+    fun updateAlbumCover_delegatesToRepository() = runTest {
+        val viewModel = createViewModel()
+
+        viewModel.updateAlbumCover(42L, "content://media/picker/image/42")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { libraryRepository.updateAlbumCover(42L, "content://media/picker/image/42") }
     }
 }

@@ -29,12 +29,24 @@ import androidx.compose.ui.unit.sp
 import com.example.prism.R
 import com.example.prism.ui.theme.*
 
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawBehind
+
 /**
- * Creates and remembers a single shared shimmer [Brush].
- * Avoids creating dozens of concurrent infinite transitions when multiple items shimmer.
+ * Modifier that draws a shimmer gradient during the draw phase, completely skipping
+ * composition-phase recomposition on each animation frame.
  */
-@Composable
-fun rememberShimmerBrush(targetValue: Float = 1000f): Brush {
+fun Modifier.shimmer(): Modifier = composed {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerTranslation"
+    )
     val shimmerColors = remember {
         listOf(
             Color.White.copy(alpha = 0.03f),
@@ -42,24 +54,15 @@ fun rememberShimmerBrush(targetValue: Float = 1000f): Brush {
             Color.White.copy(alpha = 0.03f),
         )
     }
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateAnim by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = targetValue,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmerTranslation"
-    )
-    return Brush.linearGradient(
-        colors = shimmerColors,
-        start = Offset.Zero,
-        end = Offset(x = translateAnim, y = translateAnim)
-    )
+    drawBehind {
+        val brush = Brush.linearGradient(
+            colors = shimmerColors,
+            start = Offset.Zero,
+            end = Offset(x = translateAnim, y = translateAnim)
+        )
+        drawRect(brush)
+    }
 }
-
-fun Modifier.shimmer(brush: Brush): Modifier = this.background(brush)
 
 @Composable
 fun SearchBar(
@@ -107,8 +110,6 @@ fun SearchBar(
 
 @Composable
 fun SongListShimmer(modifier: Modifier = Modifier) {
-    val shimmerBrush = rememberShimmerBrush()
-
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -126,7 +127,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .shimmer(shimmerBrush)
+                        .shimmer()
                 )
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -137,7 +138,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                             .fillMaxWidth(0.6f)
                             .height(14.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .shimmer(shimmerBrush)
+                            .shimmer()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Box(
@@ -145,7 +146,7 @@ fun SongListShimmer(modifier: Modifier = Modifier) {
                             .fillMaxWidth(0.35f)
                             .height(10.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .shimmer(shimmerBrush)
+                            .shimmer()
                     )
                 }
             }

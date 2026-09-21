@@ -4,8 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
-import com.example.prism.domain.repository.MusicRepository
+import com.example.prism.core.util.DefaultDispatcherProvider
+import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.entity.Song
+import com.example.prism.domain.repository.LibraryRepository
+import com.example.prism.domain.repository.PlaylistRepository
+import com.example.prism.domain.repository.ScannerRepository
 import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
@@ -17,30 +21,39 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.example.prism.core.util.DefaultDispatcherProvider
-import com.example.prism.core.util.DispatcherProvider
+
+/**
+ * ViewModel for the music library screens (Songs, Albums, Artists, Playlists).
+ * Adheres to the Interface Segregation Principle (ISP) by depending on fine-grained
+ * repositories ([LibraryRepository], [PlaylistRepository], [ScannerRepository]) rather
+ * than a monolithic God interface.
+ */
 class LibraryViewModel(
-    private val repository: MusicRepository,
+    private val libraryRepository: LibraryRepository,
+    private val playlistRepository: PlaylistRepository,
+    private val scannerRepository: ScannerRepository,
     private val dispatchers: DispatcherProvider = DefaultDispatcherProvider(),
 ) : ViewModel() {
 
-    val isLoading = repository.isLoading
-    val totalSongsCount = repository.totalSongsCount
+    val isLoading = scannerRepository.isLoading
+    val totalSongsCount = scannerRepository.totalSongsCount
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
+    private fun searchDebounce(query: String): Long = if (query.isEmpty()) 0L else 300L
+
     @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val songsFlow: Flow<PagingData<Song>> = _searchQuery
-        .debounce { query -> if (query.isEmpty()) 0L else 300L }
+        .debounce(::searchDebounce)
         .flatMapLatest { query ->
-            repository.getSongsFlow(query)
+            libraryRepository.getSongsFlow(query)
         }
         .cachedIn(viewModelScope)
 
@@ -49,9 +62,9 @@ class LibraryViewModel(
     // This means switching back to Albums/Artists never triggers a fresh Room query.
     @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val albumsFlow = _searchQuery
-        .debounce { query -> if (query.isEmpty()) 0L else 300L }
+        .debounce(::searchDebounce)
         .flatMapLatest { query ->
-            repository.getAlbumsFlow(query)
+            libraryRepository.getAlbumsFlow(query)
         }
         .map { it.toImmutableList() }
         .distinctUntilChanged()
@@ -59,23 +72,23 @@ class LibraryViewModel(
 
     @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val artistsFlow = _searchQuery
-        .debounce { query -> if (query.isEmpty()) 0L else 300L }
+        .debounce(::searchDebounce)
         .flatMapLatest { query ->
-            repository.getArtistsFlow(query)
+            libraryRepository.getArtistsFlow(query)
         }
         .map { it.toImmutableList() }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
 
-    val playlistsWithCountsFlow = repository.playlistsWithCountsFlow
+    val playlistsWithCountsFlow = playlistRepository.playlistsWithCountsFlow
         .map { it.toImmutableList() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), persistentListOf())
 
-    val favoriteSongIds: StateFlow<ImmutableSet<String>> = repository.getFavoriteSongIds()
+    val favoriteSongIds: StateFlow<ImmutableSet<String>> = playlistRepository.getFavoriteSongIds()
         .map { it.toImmutableSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), persistentSetOf())
 
-    // The repository is a singleton managed by MainApplication — we do NOT call
+    // The scanner repository is a singleton managed by MainApplication — we do NOT call
     // startObserving() or stopObserving() here to avoid conflicting lifecycle management.
 
     fun setSearchQuery(query: String) {
@@ -83,32 +96,42 @@ class LibraryViewModel(
     }
 
     fun toggleFavorite(song: Song) {
-        viewModelScope.launch(dispatchers.io) { repository.toggleFavorite(song) }
+        viewModelScope.launch(dispatchers.io) { playlistRepository.toggleFavorite(song) }
     }
 
     fun createPlaylist(name: String) {
-        viewModelScope.launch(dispatchers.io) { repository.createPlaylist(name) }
+        viewModelScope.launch(dispatchers.io) { playlistRepository.createPlaylist(name) }
     }
 
     fun deletePlaylist(id: Long) {
-        viewModelScope.launch(dispatchers.io) { repository.deletePlaylist(id) }
+        viewModelScope.launch(dispatchers.io) { playlistRepository.deletePlaylist(id) }
     }
 
     fun addSongToPlaylist(playlistId: Long, songId: String) {
-        viewModelScope.launch(dispatchers.io) { repository.addSongToPlaylist(playlistId, songId) }
+        viewModelScope.launch(dispatchers.io) { playlistRepository.addSongToPlaylist(playlistId, songId) }
     }
 
     fun removeSongFromPlaylist(playlistId: Long, songId: String) {
-        viewModelScope.launch(dispatchers.io) { repository.removeSongFromPlaylist(playlistId, songId) }
+        viewModelScope.launch(dispatchers.io) { playlistRepository.removeSongFromPlaylist(playlistId, songId) }
     }
 
-    fun getSongsForPlaylist(id: Long) = repository.getSongsForPlaylist(id)
-    fun getSongsByAlbum(id: Long) = repository.getSongsByAlbum(id)
-    fun getSongsByArtist(name: String) = repository.getSongsByArtist(name)
+    fun getSongsForPlaylist(id: Long) = playlistRepository.getSongsForPlaylist(id)
+    fun getSongsByAlbum(id: Long) = libraryRepository.getSongsByAlbum(id)
+    fun getSongsByArtist(name: String) = libraryRepository.getSongsByArtist(name)
+
+    fun updateSongArtwork(songId: String, artworkUri: String) {
+        viewModelScope.launch(dispatchers.io) {
+            libraryRepository.updateSongArtwork(songId, artworkUri)
+        }
+    }
+
+    fun updateAlbumCover(albumId: Long, coverUri: String) {
+        viewModelScope.launch(dispatchers.io) {
+            libraryRepository.updateAlbumCover(albumId, coverUri)
+        }
+    }
 
     fun loadLocalSongs() {
-        repository.triggerScan()
+        scannerRepository.triggerScan()
     }
-
-
 }

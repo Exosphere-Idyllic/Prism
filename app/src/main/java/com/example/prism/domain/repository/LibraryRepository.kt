@@ -14,4 +14,6 @@ interface LibraryRepository {
     suspend fun getAllSongs(): List<Song>
     fun getSongsByAlbum(id: Long): Flow<List<Song>>
     fun getSongsByArtist(name: String): Flow<List<Song>>
+    suspend fun updateSongArtwork(songId: String, artworkUri: String)
+    suspend fun updateAlbumCover(albumId: Long, coverUri: String)
 }

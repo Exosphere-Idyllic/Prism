@@ -10,7 +10,7 @@ import androidx.room.PrimaryKey
     tableName = "albums",
     indices = [
         Index(value = ["albumName"]),
-        Index(value = ["artist"])
+        Index(value = ["artist"]),
     ]
 )
 data class Album(

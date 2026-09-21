@@ -1,9 +1,8 @@
 package com.example.prism.data.db
 
 import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import com.example.prism.data.entity.Artist
 import kotlinx.coroutines.flow.Flow
 
@@ -15,7 +14,7 @@ interface ArtistDao {
     @Query("SELECT * FROM artists WHERE name LIKE :query ORDER BY name ASC")
     fun searchArtists(query: String): Flow<List<Artist>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertAll(artists: List<Artist>)
 
     @Query("DELETE FROM artists")
@@ -25,5 +24,32 @@ interface ArtistDao {
     suspend fun deleteByNames(names: List<String>)
 
     @Query("DELETE FROM artists WHERE name NOT IN (SELECT DISTINCT artist FROM songs)")
-    suspend fun deleteOrphanedArtists()
+    suspend fun deleteOrphans()
+
+    @Query(
+        """
+        INSERT INTO artists (name, songCount, albumCount)
+        SELECT artist, COUNT(*), COUNT(DISTINCT albumId)
+        FROM songs
+        GROUP BY artist
+        ON CONFLICT(name) DO UPDATE SET
+            songCount = excluded.songCount,
+            albumCount = excluded.albumCount
+        """,
+    )
+    suspend fun syncAllFromSongs()
+
+    @Query(
+        """
+        INSERT INTO artists (name, songCount, albumCount)
+        SELECT artist, COUNT(*), COUNT(DISTINCT albumId)
+        FROM songs
+        WHERE artist IN (:names)
+        GROUP BY artist
+        ON CONFLICT(name) DO UPDATE SET
+            songCount = excluded.songCount,
+            albumCount = excluded.albumCount
+        """,
+    )
+    suspend fun syncFromSongsForNames(names: List<String>)
 }

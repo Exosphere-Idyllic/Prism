@@ -20,21 +20,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.prism.R
 import com.example.prism.data.entity.Song
-import com.example.prism.data.repository.FAVORITES_PLAYLIST_NAME
-import com.example.prism.ui.library.LibraryViewModel
+import com.example.prism.data.repository.isFavoritesPlaylist
+import com.example.prism.domain.model.PlaylistWithCount
 import com.example.prism.ui.theme.*
 
 @Composable
 fun AddToPlaylistDialog(
     song: Song,
-    libraryViewModel: LibraryViewModel,
+    playlists: List<PlaylistWithCount>,
+    onSelectPlaylist: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle()
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.add_to_playlist_title), color = AppTextPrimary, fontWeight = FontWeight.Bold) },
@@ -53,12 +51,12 @@ fun AddToPlaylistDialog(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AppSurface2)
                                 .clickable {
-                                    libraryViewModel.addSongToPlaylist(playlist.id, song.id)
+                                    onSelectPlaylist(playlist.id)
                                     onDismiss()
                                 }
                                 .padding(12.dp)
                         ) {
-                            val displayName = if (playlist.name == FAVORITES_PLAYLIST_NAME) {
+                            val displayName = if (isFavoritesPlaylist(playlist.name)) {
                                 stringResource(R.string.playlist_favorites)
                             } else {
                                 playlist.name

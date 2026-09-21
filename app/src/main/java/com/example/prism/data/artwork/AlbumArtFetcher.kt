@@ -1,16 +1,13 @@
 package com.example.prism.data.artwork
 
-import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.CancellationSignal
 import android.provider.MediaStore
 import android.util.Size
-import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import coil3.ImageLoader
 import coil3.asImage
@@ -23,9 +20,15 @@ import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import okio.Buffer
 import okio.FileSystem
-import java.io.InputStream
+import okio.source
 import java.util.Collections
 import java.util.LinkedHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * Coil [Fetcher] that loads artwork using a multi-strategy fallback approach.
@@ -41,9 +44,9 @@ import java.util.LinkedHashMap
  *  6. Returns `null` — the UI shows a hardcoded default drawable
  *
  * ### For Albums:
- *  1. Custom user-selected cover URI
+ *  1. Custom user-selected cover URI ([customArtworkUri])
  *  2. `ContentResolver.loadThumbnail` (API 29+)
- *  3. Fallback [ContentResolver.openInputStream] on coverUri
+ *  3. Fallback [android.content.ContentResolver.openInputStream] on coverUri
  *  4. Returns `null` — the UI shows a hardcoded default drawable
  */
 class AlbumArtFetcher(
@@ -74,7 +77,7 @@ class AlbumArtFetcher(
                         return size > 2000
                     }
                 },
-            )
+            ),
         )
 
         /**
@@ -85,7 +88,7 @@ class AlbumArtFetcher(
             artworkUri: String,
             customArtworkUri: String,
             mediaUri: String?,
-            dateModified: Long = 0L
+            dateModified: Long = 0L,
         ): String {
             val customHash = if (customArtworkUri.isNotEmpty()) "_c${customArtworkUri.hashCode()}" else ""
             val modHash = if (dateModified > 0L) "_m$dateModified" else ""
@@ -99,66 +102,65 @@ class AlbumArtFetcher(
         fun clearNegativeCache() {
             noArtworkCache.clear()
         }
+
+        val okHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(10L, TimeUnit.SECONDS)
+                .readTimeout(15L, TimeUnit.SECONDS)
+                .build()
+        }
     }
 
-    override suspend fun fetch(): FetchResult? {
+    override suspend fun fetch(): FetchResult? = withContext(Dispatchers.IO) {
         val cacheKey = negativeCacheKey(albumId, artworkUri, customArtworkUri, mediaUri, dateModified)
 
         // Fast path: in-memory negative cache
         if (noArtworkCache.contains(cacheKey)) {
-            return null
+            return@withContext null
         }
 
+        val signal = CancellationSignal()
+        val job = coroutineContext[Job]
+        job?.invokeOnCompletion { signal.cancel() }
+
         val result = if (!mediaUri.isNullOrEmpty()) {
-            fetchSongArtwork()
+            fetchSongArtwork(signal)
         } else {
-            fetchAlbumArtwork()
+            fetchAlbumArtwork(signal)
         }
 
         if (result == null) {
             noArtworkCache.add(cacheKey)
         }
 
-        return result
+        result
     }
 
     // ── Song artwork ─────────────────────────────────────────────────────────
 
-    private fun fetchSongArtwork(): FetchResult? {
-        // Strategy 1: Custom user-selected artwork URI (highest priority)
+    private fun fetchSongArtwork(signal: CancellationSignal): FetchResult? {
+        // Strategy 1: Custom user-selected artwork URI (highest priority — supports content://, file://, http://, https:// via OkHttp)
         if (customArtworkUri.isNotEmpty()) {
-            val customResult = fetchFromUri(customArtworkUri)
-            if (customResult != null) return customResult
+            fetchStreamFromCustomUri(customArtworkUri)?.let { return it }
         }
 
         // Strategy 2: System thumbnail by song MediaStore URI (API 29+) — fast OS-level cache
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
-            val songThumb = fetchSystemThumbnailBySongId(mediaUri)
-            if (songThumb != null) {
-                return bitmapToResult(songThumb)
-            }
+            fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { return bitmapToResult(it) }
         }
 
         // Strategy 3: System thumbnail by albumId (API 29+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && albumId > 0) {
-            val thumbnailBitmap = fetchSystemThumbnailBitmap(albumId)
-            if (thumbnailBitmap != null) {
-                return bitmapToResult(thumbnailBitmap)
-            }
+        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && (albumId > 0)) {
+            val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
+            fetchSystemThumbnail(albumUri, signal)?.let { return bitmapToResult(it) }
         }
 
         // Strategy 4: Embedded ID3 artwork via MediaMetadataRetriever (fallback)
-        val embeddedResult = mediaUri?.let { extractEmbeddedArtwork(it) }
-        if (embeddedResult != null) {
-            return embeddedResult
-        }
+        mediaUri?.let { extractEmbeddedArtwork(it) }?.let { return it }
 
         // Strategy 5: Fallback to generic album art URI
         if (artworkUri.isNotEmpty()) {
-            val fallbackBitmap = fetchBitmapFromContentUri(artworkUri)
-            if (fallbackBitmap != null) {
-                return bitmapToResult(fallbackBitmap)
-            }
+            fetchStreamFromContentUri(artworkUri)?.let { return it }
         }
 
         return null
@@ -166,27 +168,21 @@ class AlbumArtFetcher(
 
     // ── Album artwork ────────────────────────────────────────────────────────
 
-    private fun fetchAlbumArtwork(): FetchResult? {
-        // Strategy 1: Custom user-selected cover URI (highest priority)
+    private fun fetchAlbumArtwork(signal: CancellationSignal): FetchResult? {
+        // Strategy 1: Custom user-selected cover URI (highest priority — supports content://, file://, http://, https:// via OkHttp)
         if (customArtworkUri.isNotEmpty()) {
-            val customResult = fetchFromUri(customArtworkUri)
-            if (customResult != null) return customResult
+            fetchStreamFromCustomUri(customArtworkUri)?.let { return it }
         }
 
         // Strategy 2: System thumbnail (API 29+)
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && (albumId > 0)) {
-            val thumbnailBitmap = fetchSystemThumbnailBitmap(albumId)
-            if (thumbnailBitmap != null) {
-                return bitmapToResult(thumbnailBitmap)
-            }
+            val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
+            fetchSystemThumbnail(albumUri, signal)?.let { return bitmapToResult(it) }
         }
 
         // Strategy 3: Fallback openInputStream on coverUri
         if (artworkUri.isNotEmpty()) {
-            val fallbackBitmap = fetchBitmapFromContentUri(artworkUri)
-            if (fallbackBitmap != null) {
-                return bitmapToResult(fallbackBitmap)
-            }
+            fetchStreamFromContentUri(artworkUri)?.let { return it }
         }
 
         return null
@@ -194,75 +190,58 @@ class AlbumArtFetcher(
 
     // ── Shared strategies ────────────────────────────────────────────────────
 
-    private fun fetchFromUri(uri: String): FetchResult? {
-        return fetchStreamFromContentUri(uri)
-    }
-
-    private fun fetchSystemThumbnailBitmap(albumId: Long): Bitmap? {
+    /**
+     * Unified thumbnail loader for both song and album URIs (API 29+).
+     */
+    private fun fetchSystemThumbnail(uri: android.net.Uri, signal: CancellationSignal): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
-            val albumsUri = ContentUris.withAppendedId(
-                MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId
-            )
             val thumbSize = MASTER_ARTWORK_SIZE.coerceAtLeast(requestedSize)
-            var bitmap: Bitmap = context.contentResolver.loadThumbnail(
-                albumsUri,
-                Size(thumbSize, thumbSize),
-                CancellationSignal()
-            )
-            bitmap = downscaleBitmapIfNeeded(bitmap, thumbSize)
-            bitmap
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun fetchSystemThumbnailBySongId(songMediaUri: String): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        return try {
-            val uri = songMediaUri.toUri()
-            val thumbSize = MASTER_ARTWORK_SIZE.coerceAtLeast(requestedSize)
-            var bitmap: Bitmap = context.contentResolver.loadThumbnail(
+            context.contentResolver.loadThumbnail(
                 uri,
                 Size(thumbSize, thumbSize),
-                CancellationSignal()
+                signal,
             )
-            bitmap = downscaleBitmapIfNeeded(bitmap, thumbSize)
-            bitmap
         } catch (_: Exception) {
             null
         }
-    }
-
-    private fun fetchBitmapFromContentUri(uri: String): Bitmap? {
-        return try {
-            val parsedUri = uri.toUri()
-
-            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(parsedUri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, boundsOpts)
-            } ?: return null
-
-            val targetSize = MASTER_ARTWORK_SIZE.coerceAtLeast(requestedSize)
-            val sampleSize = calculateInSampleSize(boundsOpts.outWidth, boundsOpts.outHeight, targetSize)
-
-            val decodeOpts = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-                inPreferredConfig = Bitmap.Config.RGB_565
-            }
-            val bitmap = context.contentResolver.openInputStream(parsedUri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, decodeOpts)
-            } ?: return null
-
-            downscaleBitmapIfNeeded(bitmap, targetSize)
-        } catch (_: Exception) { null }
     }
 
     private fun fetchStreamFromContentUri(uri: String): FetchResult? {
         return try {
-            val stream = context.contentResolver.openInputStream(uri.toUri())
+            val parsedUri = uri.toUri()
+            val stream = context.contentResolver.openInputStream(parsedUri)
             stream?.let { streamToResult(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchStreamFromCustomUri(uri: String): FetchResult? {
+        return try {
+            val parsedUri = uri.toUri()
+            val scheme = parsedUri.scheme?.lowercase()
+            if (scheme == "http" || scheme == "https") {
+                fetchNetworkStream(uri)
+            } else {
+                fetchStreamFromContentUri(uri)
+            }
         } catch (_: Exception) { null }
+    }
+
+    private fun fetchNetworkStream(url: String): FetchResult? {
+        return try {
+            val request = Request.Builder().url(url).build()
+            val response = okHttpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                response.close()
+                return null
+            }
+            val body = response.body ?: return null
+            streamToResult(body.byteStream())
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun extractEmbeddedArtwork(uri: String): FetchResult? {
@@ -275,21 +254,12 @@ class AlbumArtFetcher(
                 retriever.setDataSource(context, parsedUri)
             }
             val picture = retriever.embeddedPicture ?: return null
-
-            val targetSize = MASTER_ARTWORK_SIZE.coerceAtLeast(requestedSize)
-            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(picture, 0, picture.size, boundsOpts)
-
-            val sampleSize = calculateInSampleSize(boundsOpts.outWidth, boundsOpts.outHeight, targetSize)
-            val decodeOpts = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-                inPreferredConfig = Bitmap.Config.RGB_565
-            }
-            val bitmap = BitmapFactory.decodeByteArray(picture, 0, picture.size, decodeOpts)
-                ?: return null
-
-            val scaledBitmap = downscaleBitmapIfNeeded(bitmap, targetSize)
-            bitmapToResult(scaledBitmap)
+            val buffer = Buffer().write(picture)
+            SourceFetchResult(
+                source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
+                mimeType = null,
+                dataSource = DataSource.DISK,
+            )
         } catch (_: Exception) {
             null
         } finally {
@@ -297,61 +267,28 @@ class AlbumArtFetcher(
         }
     }
 
-    // ── Bitmap helpers ───────────────────────────────────────────────────────
-
-    private fun calculateInSampleSize(width: Int, height: Int, targetSize: Int): Int {
-        var inSampleSize = 1
-        if ((width > targetSize) || (height > targetSize)) {
-            val halfWidth = width / 2
-            val halfHeight = height / 2
-            while ((halfWidth / inSampleSize) >= targetSize &&
-                   (halfHeight / inSampleSize) >= targetSize) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
-    }
-
-    private fun downscaleBitmapIfNeeded(bitmap: Bitmap, targetSize: Int): Bitmap {
-        val maxDim = maxOf(bitmap.width, bitmap.height)
-        val limit = targetSize * 2
-        if (maxDim <= limit) return bitmap
-
-        val scale = limit.toFloat() / maxDim
-        val newW = (bitmap.width * scale).toInt().coerceAtLeast(1)
-        val newH = (bitmap.height * scale).toInt().coerceAtLeast(1)
-        val scaled = bitmap.scale(newW, newH, filter = true)
-        if (scaled !== bitmap) {
-            bitmap.recycle()
-        }
-        return scaled
-    }
-
     private fun bitmapToResult(bitmap: Bitmap): FetchResult {
         return ImageFetchResult(
             image = bitmap.asImage(),
             isSampled = true,
-            dataSource = DataSource.DISK
+            dataSource = DataSource.DISK,
         )
     }
 
-    private fun streamToResult(stream: InputStream): SourceFetchResult {
+    /**
+     * Converts an [java.io.InputStream] to an Okio-backed [SourceFetchResult].
+     * Uses [java.io.InputStream.source] (Okio extension) + buffering instead of a
+     * manual 8 KB copy loop, capping at [MAX_STREAM_BYTES] to avoid OOMs.
+     */
+    private fun streamToResult(stream: java.io.InputStream): SourceFetchResult {
         val buffer = Buffer()
         stream.use { input ->
-            val tmp = ByteArray(8192)
-            var totalRead = 0L
-            while (true) {
-                val n = input.read(tmp)
-                if (n == -1) break
-                buffer.write(tmp, 0, n)
-                totalRead += n
-                if (totalRead > MAX_STREAM_BYTES) break
-            }
+            buffer.write(input.source(), MAX_STREAM_BYTES)
         }
         return SourceFetchResult(
             source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
             mimeType = null,
-            dataSource = DataSource.DISK
+            dataSource = DataSource.DISK,
         )
     }
 
@@ -359,7 +296,7 @@ class AlbumArtFetcher(
         override fun create(
             data: SongArtworkParams,
             options: Options,
-            imageLoader: ImageLoader
+            imageLoader: ImageLoader,
         ): Fetcher {
             return AlbumArtFetcher(
                 albumId = data.song.albumId,
@@ -377,7 +314,7 @@ class AlbumArtFetcher(
         override fun create(
             data: AlbumArtworkParams,
             options: Options,
-            imageLoader: ImageLoader
+            imageLoader: ImageLoader,
         ): Fetcher {
             return AlbumArtFetcher(
                 albumId = data.albumId,

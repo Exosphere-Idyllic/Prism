@@ -25,8 +25,8 @@ import androidx.compose.ui.unit.sp
 import com.example.prism.R
 import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.Artist
-import com.example.prism.data.repository.FAVORITES_PLAYLIST_NAME
-import com.example.prism.data.db.PlaylistWithCount
+import com.example.prism.data.repository.isFavoritesPlaylist
+import com.example.prism.domain.model.PlaylistWithCount
 import com.example.prism.ui.components.AlbumArtwork
 
 import com.example.prism.ui.theme.AppAccentBg
@@ -37,15 +37,6 @@ import com.example.prism.ui.theme.AppTextPrimary
 import com.example.prism.ui.theme.AppTextSecondary
 import com.example.prism.ui.theme.AppTrackBg
 
-// ─── Design tokens mapped from central theme ──────────────────────────────────
-private val CardBg       = AppSurface
-private val TextPrimary  = AppTextPrimary
-private val TextMuted    = AppTextSecondary
-private val AccentSoft   = AppAccentSoft
-private val AccentBg     = AppAccentBg
-private val DeleteTint   = AppDeleteTint
-private val ArtworkBg    = AppTrackBg
-
 @Composable
 fun AlbumGridItem(
     album: Album,
@@ -55,12 +46,8 @@ fun AlbumGridItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(CardBg)
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick
-            )
+            .background(AppSurface)
+            .clickable(onClick = onClick)
             .padding(10.dp)
     ) {
         Box(
@@ -68,7 +55,7 @@ fun AlbumGridItem(
                 .aspectRatio(1f)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(ArtworkBg)
+                .background(AppTrackBg)
         ) {
             AlbumArtwork(
                 albumId = album.id,
@@ -82,7 +69,7 @@ fun AlbumGridItem(
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = album.albumName,
-            color = TextPrimary,
+            color = AppTextPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -91,7 +78,7 @@ fun AlbumGridItem(
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = album.artist,
-            color = TextMuted,
+            color = AppTextSecondary,
             fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -99,7 +86,7 @@ fun AlbumGridItem(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = pluralStringResource(R.plurals.songs_count, album.songCount, album.songCount),
-            color = AccentSoft,
+            color = AppAccentSoft,
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium
         )
@@ -116,12 +103,8 @@ fun PlaylistListItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(CardBg)
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick
-            )
+            .background(AppSurface)
+            .clickable(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -129,18 +112,18 @@ fun PlaylistListItem(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(AccentBg),
+                .background(AppAccentBg),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
-                tint = AccentSoft,
+                tint = AppAccentSoft,
                 modifier = Modifier.size(22.dp)
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
-        val displayName = if (playlist.name == FAVORITES_PLAYLIST_NAME) {
+        val displayName = if (isFavoritesPlaylist(playlist.name)) {
             stringResource(R.string.playlist_favorites)
         } else {
             playlist.name
@@ -148,7 +131,7 @@ fun PlaylistListItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = displayName,
-                color = TextPrimary,
+                color = AppTextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -157,16 +140,16 @@ fun PlaylistListItem(
             Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = pluralStringResource(R.plurals.songs_count, playlist.songCount, playlist.songCount),
-                color = TextMuted,
+                color = AppTextSecondary,
                 fontSize = 12.sp
             )
         }
-        if (playlist.name != FAVORITES_PLAYLIST_NAME) {
+        if (!isFavoritesPlaylist(playlist.name)) {
             IconButton(onClick = onDelete) {
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = stringResource(R.string.cd_delete),
-                    tint = DeleteTint.copy(alpha = 0.7f),
+                    tint = AppDeleteTint.copy(alpha = 0.7f),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -183,12 +166,8 @@ fun ArtistListItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(CardBg)
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick
-            )
+            .background(AppSurface)
+            .clickable(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -196,12 +175,12 @@ fun ArtistListItem(
             modifier = Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(AccentBg),
+                .background(AppAccentBg),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = artist.name.take(1).uppercase(),
-                color = AccentSoft,
+                color = AppAccentSoft,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -210,7 +189,7 @@ fun ArtistListItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = artist.name,
-                color = TextPrimary,
+                color = AppTextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -219,7 +198,7 @@ fun ArtistListItem(
             Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = stringResource(R.string.artist_albums_songs_count, artist.albumCount, artist.songCount),
-                color = TextMuted,
+                color = AppTextSecondary,
                 fontSize = 12.sp
             )
         }

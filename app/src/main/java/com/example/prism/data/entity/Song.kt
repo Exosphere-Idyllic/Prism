@@ -1,13 +1,12 @@
 package com.example.prism.data.entity
 
 import androidx.compose.runtime.Immutable
-
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Immutable
-
 @Entity(
     tableName = "songs",
     indices = [
@@ -15,7 +14,7 @@ import androidx.room.PrimaryKey
         Index(value = ["artist"]),
         Index(value = ["album"]),
         Index(value = ["albumId"]),
-        Index(value = ["dateModified"])
+        Index(value = ["dateModified"]),
     ]
 )
 data class Song(
@@ -29,5 +28,7 @@ data class Song(
     val duration: Long,
     val dateModified: Long,
     val track: Int = 0,
-    val customArtworkUri: String = ""
+    val customArtworkUri: String = "",
+    @ColumnInfo(defaultValue = "''")
+    val customLyricsUri: String = ""
 )

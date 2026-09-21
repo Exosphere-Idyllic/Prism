@@ -1,6 +1,6 @@
 package com.example.prism.domain.repository
 
-import com.example.prism.data.db.PlaylistWithCount
+import com.example.prism.domain.model.PlaylistWithCount
 import com.example.prism.data.entity.Song
 import kotlinx.coroutines.flow.Flow
 

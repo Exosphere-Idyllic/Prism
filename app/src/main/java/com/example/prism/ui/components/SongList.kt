@@ -11,10 +11,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,19 +41,10 @@ import com.example.prism.ui.theme.AppAccentBg
 import com.example.prism.ui.theme.AppAccentSoft
 import com.example.prism.ui.theme.AppFavoriteColor
 import com.example.prism.ui.theme.AppIconInactive
+import com.example.prism.ui.theme.AppSurface2
 import com.example.prism.ui.theme.AppSurface3
 import com.example.prism.ui.theme.AppTextPrimary
 import com.example.prism.ui.theme.AppTextSecondary
-
-// ─── Design tokens mapped from central theme ──────────────────────────────
-private val SelectedBg       = AppAccentBg
-private val ArtworkBg        = AppSurface3
-private val TitleSelected    = AppAccentSoft
-private val TitleNormal      = AppTextPrimary
-private val SubtitleColor    = AppTextSecondary
-private val FavoriteActive   = AppFavoriteColor
-private val IconInactive     = AppIconInactive
-private val PlayingBarColor  = AppAccentSoft
 
 @Composable
 fun SongList(
@@ -60,6 +57,7 @@ fun SongList(
     onAddToPlaylist: (Song) -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    onEditArtwork: ((Song) -> Unit)? = null,
 ) {
     LazyColumn(
         state = listState,
@@ -84,7 +82,8 @@ fun SongList(
                     isFavorite = isFavorite,
                     onSongSelected = onSongSelected,
                     onFavoriteToggle = onFavoriteToggle,
-                    onAddToPlaylist = onAddToPlaylist
+                    onAddToPlaylist = onAddToPlaylist,
+                    onEditArtwork = onEditArtwork,
                 )
             }
         }
@@ -99,18 +98,18 @@ fun SongListItem(
     isFavorite: Boolean,
     onSongSelected: (Song) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
-    onAddToPlaylist: ((Song) -> Unit)? = null
+    onAddToPlaylist: ((Song) -> Unit)? = null,
+    onEditArtwork: ((Song) -> Unit)? = null,
+    customTrailingAction: (@Composable (Song) -> Unit)? = null,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) SelectedBg else Color.Transparent)
-            .clickable(
-                interactionSource = null,
-                indication = null
-            ) { onSongSelected(song) }
+            .background(if (isSelected) AppAccentBg else Color.Transparent)
+            .clickable(onClick = { onSongSelected(song) })
             .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -123,7 +122,7 @@ fun SongListItem(
             modifier = Modifier
                 .size(50.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(ArtworkBg)
+                .background(AppSurface3)
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -132,7 +131,7 @@ fun SongListItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = song.title,
-                color = if (isSelected) TitleSelected else TitleNormal,
+                color = if (isSelected) AppAccentSoft else AppTextPrimary,
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
@@ -141,7 +140,7 @@ fun SongListItem(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = song.artist,
-                color = SubtitleColor,
+                color = AppTextSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -160,7 +159,7 @@ fun SongListItem(
                         modifier = Modifier
                             .size(width = 2.5.dp, height = if (i == 1) 14.dp else 8.dp)
                             .clip(RoundedCornerShape(2.dp))
-                            .background(PlayingBarColor)
+                            .background(AppAccentSoft)
                     )
                 }
             }
@@ -171,20 +170,60 @@ fun SongListItem(
             Icon(
                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = stringResource(R.string.cd_favorite),
-                tint = if (isFavorite) FavoriteActive else IconInactive,
+                tint = if (isFavorite) AppFavoriteColor else AppIconInactive,
                 modifier = Modifier.size(18.dp)
             )
         }
 
-        // More options
-        if (onAddToPlaylist != null) {
-            IconButton(onClick = { onAddToPlaylist(song) }, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = stringResource(R.string.cd_more_options),
-                    tint = IconInactive,
-                    modifier = Modifier.size(18.dp)
-                )
+        // Custom trailing action or More options
+        if (customTrailingAction != null) {
+            customTrailingAction(song)
+        } else if (onAddToPlaylist != null || onEditArtwork != null) {
+            Box {
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = stringResource(R.string.cd_more_options),
+                        tint = AppIconInactive,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    modifier = Modifier.background(AppSurface2)
+                ) {
+                    if (onAddToPlaylist != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(R.string.add_to_playlist_title),
+                                    color = AppTextPrimary,
+                                    fontSize = 14.sp
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onAddToPlaylist(song)
+                            }
+                        )
+                    }
+                    if (onEditArtwork != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(R.string.change_artwork),
+                                    color = AppTextPrimary,
+                                    fontSize = 14.sp
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onEditArtwork(song)
+                            }
+                        )
+                    }
+                }
             }
         }
     }

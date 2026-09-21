@@ -47,4 +47,23 @@
     <string name="cd_more_options">More options</string>
     <string name="cd_delete">Delete</string>
     <string name="cd_remove">Remove</string>
+    <string name="cd_lyrics">Lyrics</string>
+    <string name="cd_artwork">Artwork</string>
+    <string name="lyrics_title">Lyrics</string>
+    <string name="no_lyrics_available">No lyrics available</string>
+    <string name="lyrics_source_lrc">LRC File</string>
+    <string name="lyrics_source_embedded">Embedded</string>
+    <string name="lyrics_synced">Synced</string>
+    <string name="lyrics_unsynced">Unsynced</string>
+
+    <!-- Custom Artwork UI -->
+    <string name="change_artwork">Change Artwork</string>
+    <string name="reset_artwork">Reset to Default</string>
+    <string name="edit_artwork_title">Edit Artwork</string>
+    <string name="choose_from_gallery">Choose from Gallery</string>
+    <string name="enter_image_url">Or enter image URL:</string>
+    <string name="image_url_hint">https://example.com/cover.jpg</string>
+    <string name="save">Save</string>
+    <string name="preview">Preview</string>
+    <string name="cd_edit_artwork">Edit artwork</string>
 </resources>

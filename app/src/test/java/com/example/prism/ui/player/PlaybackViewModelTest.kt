@@ -2,6 +2,7 @@ package com.example.prism.ui.player
 
 import com.example.prism.data.entity.Song
 import com.example.prism.player.PlaybackManager
+import com.example.prism.player.ProgressState
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify

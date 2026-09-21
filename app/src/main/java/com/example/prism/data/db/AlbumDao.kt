@@ -1,9 +1,8 @@
 package com.example.prism.data.db
 
 import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import com.example.prism.data.entity.Album
 import kotlinx.coroutines.flow.Flow
 
@@ -15,7 +14,7 @@ interface AlbumDao {
     @Query("SELECT * FROM albums WHERE albumName LIKE :query OR artist LIKE :query ORDER BY albumName ASC")
     fun searchAlbums(query: String): Flow<List<Album>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertAll(albums: List<Album>)
 
     @Query("SELECT id, customCoverUri FROM albums WHERE customCoverUri != ''")
@@ -24,8 +23,8 @@ interface AlbumDao {
     @Query("SELECT id, customCoverUri FROM albums WHERE id IN (:ids) AND customCoverUri != ''")
     suspend fun getCustomCoverUris(ids: List<Long>): List<AlbumCustomCover>
 
-    @Query("UPDATE albums SET customCoverUri = :uri WHERE id = :id")
-    suspend fun updateCustomCover(id: Long, uri: String)
+    @Query("UPDATE albums SET customCoverUri = :customCoverUri WHERE id = :id")
+    suspend fun updateCustomCoverUri(id: Long, customCoverUri: String)
 
     @Query("DELETE FROM albums")
     suspend fun deleteAll()
@@ -34,5 +33,36 @@ interface AlbumDao {
     suspend fun deleteByIds(ids: List<Long>)
 
     @Query("DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT albumId FROM songs)")
-    suspend fun deleteOrphanedAlbums()
+    suspend fun deleteOrphans()
+
+    @Query(
+        """
+        INSERT INTO albums (id, albumName, artist, coverPath, songCount, customCoverUri)
+        SELECT albumId, MIN(album), MIN(artist), MAX(artworkUri), COUNT(*), ''
+        FROM songs
+        GROUP BY albumId
+        ON CONFLICT(id) DO UPDATE SET
+            albumName = excluded.albumName,
+            artist = excluded.artist,
+            coverPath = excluded.coverPath,
+            songCount = excluded.songCount
+        """,
+    )
+    suspend fun syncAllFromSongs()
+
+    @Query(
+        """
+        INSERT INTO albums (id, albumName, artist, coverPath, songCount, customCoverUri)
+        SELECT albumId, MIN(album), MIN(artist), MAX(artworkUri), COUNT(*), ''
+        FROM songs
+        WHERE albumId IN (:albumIds)
+        GROUP BY albumId
+        ON CONFLICT(id) DO UPDATE SET
+            albumName = excluded.albumName,
+            artist = excluded.artist,
+            coverPath = excluded.coverPath,
+            songCount = excluded.songCount
+        """,
+    )
+    suspend fun syncFromSongsForIds(albumIds: List<Long>)
 }

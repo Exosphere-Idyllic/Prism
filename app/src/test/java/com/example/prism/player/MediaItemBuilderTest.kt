@@ -1,8 +1,9 @@
 package com.example.prism.player
 
+import android.content.ContentUris
+import android.provider.MediaStore
 import com.example.prism.data.entity.Song
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -29,6 +30,47 @@ class MediaItemBuilderTest {
         assertEquals("42", mediaItem.mediaId)
         assertEquals("Bohemian Rhapsody", mediaItem.mediaMetadata.title.toString())
         assertEquals("Queen", mediaItem.mediaMetadata.artist.toString())
+        assertEquals("A Night at the Opera", mediaItem.mediaMetadata.albumTitle.toString())
+    }
+
+    @Test
+    fun buildMediaItem_setsTrackNumberWhenGreaterThanZero() {
+        val song = Song(
+            id = "42",
+            title = "Bohemian Rhapsody",
+            artist = "Queen",
+            album = "A Night at the Opera",
+            albumId = 7L,
+            mediaUri = "content://media/external/audio/media/42",
+            artworkUri = "",
+            duration = 354000L,
+            dateModified = 123456789L,
+            track = 11,
+        )
+
+        val mediaItem = song.toMediaItem()
+
+        assertEquals(11, mediaItem.mediaMetadata.trackNumber)
+    }
+
+    @Test
+    fun buildMediaItem_fallsBackToAlbumIdUriWhenArtworkUriEmpty() {
+        val song = Song(
+            id = "42",
+            title = "Bohemian Rhapsody",
+            artist = "Queen",
+            album = "A Night at the Opera",
+            albumId = 7L,
+            mediaUri = "content://media/external/audio/media/42",
+            artworkUri = "",
+            duration = 354000L,
+            dateModified = 123456789L,
+        )
+
+        val mediaItem = song.toMediaItem()
+        val expectedUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, 7L).toString()
+
+        assertEquals(expectedUri, mediaItem.mediaMetadata.artworkUri.toString())
     }
 
     @Test

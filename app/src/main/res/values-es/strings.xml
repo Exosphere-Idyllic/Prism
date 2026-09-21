@@ -47,4 +47,23 @@
     <string name="cd_more_options">Más opciones</string>
     <string name="cd_delete">Eliminar</string>
     <string name="cd_remove">Quitar</string>
+    <string name="cd_lyrics">Letras</string>
+    <string name="cd_artwork">Carátula</string>
+    <string name="lyrics_title">Letras</string>
+    <string name="no_lyrics_available">No hay letras disponibles</string>
+    <string name="lyrics_source_lrc">Archivo LRC</string>
+    <string name="lyrics_source_embedded">Embebidas</string>
+    <string name="lyrics_synced">Sincronizadas</string>
+    <string name="lyrics_unsynced">Sin sincronizar</string>
+
+    <!-- Custom Artwork UI -->
+    <string name="change_artwork">Cambiar carátula</string>
+    <string name="reset_artwork">Restablecer por defecto</string>
+    <string name="edit_artwork_title">Editar carátula</string>
+    <string name="choose_from_gallery">Elegir de la galería</string>
+    <string name="enter_image_url">O ingresa la URL de la imagen:</string>
+    <string name="image_url_hint">https://ejemplo.com/portada.jpg</string>
+    <string name="save">Guardar</string>
+    <string name="preview">Vista previa</string>
+    <string name="cd_edit_artwork">Editar carátula</string>
 </resources>

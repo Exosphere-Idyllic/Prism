@@ -29,25 +29,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.prism.ui.player.ProgressState
 import com.example.prism.R
 import com.example.prism.data.entity.Song
+import com.example.prism.player.ProgressState
+import com.example.prism.ui.theme.*
 import kotlinx.coroutines.flow.StateFlow
-
-import com.example.prism.ui.theme.AppAccent
-import com.example.prism.ui.theme.AppAccentSoft
-import com.example.prism.ui.theme.AppSurface
-import com.example.prism.ui.theme.AppTextPrimary
-import com.example.prism.ui.theme.AppTextSecondary
-import com.example.prism.ui.theme.AppTrackOverlay
-
-// ─── Design tokens mapped from central theme ─────────────────────────────────
-private val MpSurface    = AppSurface
-private val MpAccent     = AppAccent
-private val MpAccentSoft = AppAccentSoft
-private val MpTextPri    = AppTextPrimary
-private val MpTextSec    = AppTextSecondary
-private val MpTrackBg    = AppTrackOverlay
 
 @Composable
 fun MiniPlayer(
@@ -58,23 +44,46 @@ fun MiniPlayer(
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val progressState = progressStateFlow.collectAsStateWithLifecycle()
+
+    MiniPlayer(
+        song = song,
+        isPlaying = isPlaying,
+        progressFraction = {
+            val current = progressState.value
+            if (current.duration > 0L) {
+                (current.currentPosition.toFloat() / current.duration.toFloat()).coerceIn(0f, 1f)
+            } else 0f
+        },
+        onPlayPauseToggle = onPlayPauseToggle,
+        onOpenPlayer = onOpenPlayer,
+        modifier = modifier,
+    )
+}
+
+@Composable
+fun MiniPlayer(
+    song: Song,
+    isPlaying: Boolean,
+    progressFraction: () -> Float,
+    onPlayPauseToggle: () -> Unit,
+    onOpenPlayer: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val currentOnOpenPlayer by rememberUpdatedState(onOpenPlayer)
     val currentOnPlayPauseToggle by rememberUpdatedState(onPlayPauseToggle)
 
     Card(
+        onClick = currentOnOpenPlayer,
         modifier = modifier
             .fillMaxWidth()
-            .shadow(20.dp, RoundedCornerShape(20.dp))
-            .clickable(
-                interactionSource = null,
-                indication = null
-            ) { currentOnOpenPlayer() },
-        colors = CardDefaults.cardColors(containerColor = MpSurface),
+            .shadow(20.dp, RoundedCornerShape(20.dp)),
+        colors = CardDefaults.cardColors(containerColor = AppSurface),
         shape = RoundedCornerShape(20.dp),
     ) {
         Column {
-            // Thin progress indicator at the very top of the card
-            MiniPlayerProgressBar(progressStateFlow)
+            // Thin progress indicator at the very top of the card (draw phase only)
+            MiniPlayerProgressBar(progressFraction = progressFraction)
 
             Row(
                 modifier = Modifier
@@ -91,7 +100,7 @@ fun MiniPlayer(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MpTrackBg)
+                        .background(AppTrackOverlay)
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
@@ -100,7 +109,7 @@ fun MiniPlayer(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = song.title,
-                        color = MpTextPri,
+                        color = AppTextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -109,7 +118,7 @@ fun MiniPlayer(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = song.artist,
-                        color = MpTextSec,
+                        color = AppTextSecondary,
                         fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -118,19 +127,16 @@ fun MiniPlayer(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Play / Pause button
+                // Play / Pause button with tactile ripple
                 val playBrush = remember {
-                    Brush.linearGradient(listOf(MpAccentSoft, MpAccent))
+                    Brush.linearGradient(listOf(AppAccentSoft, AppAccent))
                 }
                 Box(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(playBrush)
-                        .clickable(
-                            interactionSource = null,
-                            indication = null
-                        ) { currentOnPlayPauseToggle() },
+                        .clickable(onClick = currentOnPlayPauseToggle),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -146,22 +152,20 @@ fun MiniPlayer(
 }
 
 @Composable
-fun MiniPlayerProgressBar(progressStateFlow: StateFlow<ProgressState>) {
-    // Only the draw phase is re-executed on each tick — no recomposition overhead.
-    val progressState = progressStateFlow.collectAsStateWithLifecycle()
-    val gradientColors = remember { listOf(MpAccentSoft, MpAccent) }
+fun MiniPlayerProgressBar(
+    progressFraction: () -> Float,
+    modifier: Modifier = Modifier,
+) {
+    val gradientColors = remember { listOf(AppAccentSoft, AppAccent) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(2.dp)
             .drawBehind {
                 // Track
-                drawRect(color = MpTrackBg)
-                val current = progressState.value
-                val fraction = if (current.duration > 0L) {
-                    (current.currentPosition.toFloat() / current.duration.toFloat()).coerceIn(0f, 1f)
-                } else 0f
+                drawRect(color = AppTrackOverlay)
+                val fraction = progressFraction().coerceIn(0f, 1f)
                 // Filled portion
                 drawRect(
                     brush = Brush.horizontalGradient(gradientColors),

@@ -2,14 +2,14 @@ package com.example.prism.data.media
 
 import android.app.Application
 import android.content.ContentUris
-import android.content.Context
 import android.database.ContentObserver
 import android.database.Cursor
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import androidx.room.withTransaction
 import com.example.prism.data.db.AppDatabase
-import com.example.prism.data.db.SongSyncInfo
 import com.example.prism.data.entity.Song
 import com.example.prism.data.preferences.ScanPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +17,7 @@ import com.example.prism.core.util.DefaultDispatcherProvider
 import com.example.prism.core.util.DispatcherProvider
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.milliseconds
 
 interface MediaStoreScanner {
@@ -35,9 +37,10 @@ interface MediaStoreScanner {
 
 class MediaStoreScannerImpl(
     private val app: Application,
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
     private val database: AppDatabase,
     private val dispatchers: DispatcherProvider = DefaultDispatcherProvider(),
+    private val scanPreferences: ScanPreferences = ScanPreferences(app),
     /** Called after a scan with the touched song and album IDs. */
     private val onScanChanged: ((changedSongIds: List<String>, changedAlbumIds: List<Long>, isFullScan: Boolean) -> Unit)? = null,
 ) : MediaStoreScanner {
@@ -46,34 +49,58 @@ class MediaStoreScannerImpl(
     private val playlistDao = database.playlistDao()
     private val metadataUpdater = IncrementalMetadataUpdater(database)
 
-    private val _isLoading = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(value = false)
     override val isLoading = _isLoading.asStateFlow()
 
     private val contentObserverEvents = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
     private var contentObserver: ContentObserver? = null
-    private val scanMutex = kotlinx.coroutines.sync.Mutex()
-    private var hasStarted = false
 
-    private val scanPreferences = ScanPreferences(app)
+    /**
+     * Conflated channel ensuring thread-safe, sequential scanning without race conditions.
+     * If multiple events or scan triggers arrive while doScan() is executing, exactly
+     * one follow-up scan is triggered immediately after the active pass finishes.
+     */
+    private val scanRequests = Channel<Unit>(Channel.CONFLATED)
+
+    private val hasStarted = AtomicBoolean(false)
+
+    // Shared MediaStore projection — declared once, reused by all query helpers.
+    private val songProjection = arrayOf(
+        MediaStore.Audio.Media._ID,
+        MediaStore.Audio.Media.TITLE,
+        MediaStore.Audio.Media.ARTIST,
+        MediaStore.Audio.Media.ALBUM,
+        MediaStore.Audio.Media.ALBUM_ID,
+        MediaStore.Audio.Media.DURATION,
+        MediaStore.Audio.Media.DATE_MODIFIED,
+        MediaStore.Audio.Media.TRACK,
+    )
 
     init {
-        scope.launch {
-            @OptIn(kotlinx.coroutines.FlowPreview::class)
-            contentObserverEvents
-                .debounce(1000.milliseconds)
-                .collect {
-                    performScan()
-                }
+        scope.launch(dispatchers.io) {
+            launch {
+                @OptIn(kotlinx.coroutines.FlowPreview::class)
+                contentObserverEvents
+                    .debounce(1000.milliseconds)
+                    .collect {
+                        scanRequests.trySend(Unit)
+                    }
+            }
+
+            while (true) {
+                scanRequests.receive()
+                doScan()
+            }
         }
     }
 
     override fun startObserving() {
         if (contentObserver == null) {
-            val observer = object : ContentObserver(null) {
+            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
                     contentObserverEvents.tryEmit(Unit)
                 }
@@ -82,21 +109,20 @@ class MediaStoreScannerImpl(
                 app.contentResolver.registerContentObserver(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                     true,
-                    observer
+                    observer,
                 )
                 contentObserver = observer
             } catch (e: Exception) {
                 Timber.e(e, "Failed to register content observer")
             }
         }
-        if (!hasStarted) {
-            hasStarted = true
-            scope.launch { performScan() }
+        if (hasStarted.compareAndSet(false, true)) {
+            scanRequests.trySend(Unit)
         }
     }
 
     override fun triggerScan() {
-        scope.launch { performScan() }
+        scanRequests.trySend(Unit)
     }
 
     override fun stopObserving() {
@@ -104,10 +130,10 @@ class MediaStoreScannerImpl(
             app.contentResolver.unregisterContentObserver(it)
             contentObserver = null
         }
+        hasStarted.set(false)
     }
 
-    private suspend fun performScan() = withContext(dispatchers.io) {
-        if (!scanMutex.tryLock()) return@withContext
+    private suspend fun doScan() {
         _isLoading.value = true
         try {
             val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
@@ -120,25 +146,25 @@ class MediaStoreScannerImpl(
 
             if (mediaStoreIds != null) {
                 if (isFullScan) {
-                    toUpsert.addAll(queryMediaStore())
+                    toUpsert.addAll(querySongsFromMediaStore())
                 } else {
-                    val roomIdsLong = roomSongsInfo.keys.mapNotNull { it.toLongOrNull() }.toSet()
+                    val roomIdsLong = roomSongsInfo.keys.asSequence().mapNotNull { it.toLongOrNull() }.toSet()
                     val addedIds = mediaStoreIds - roomIdsLong
                     val upsertedIds = mutableSetOf<String>()
 
                     // 1. Detect newly added songs
                     if (addedIds.isNotEmpty()) {
-                        val addedSongs = queryMediaStoreByIds(addedIds)
+                        val addedSongs = querySongsFromMediaStore(byIds = addedIds)
                         toUpsert.addAll(addedSongs)
                         addedSongs.forEach { upsertedIds.add(it.id) }
                     }
 
                     // 2. Detect modified songs based on modification timestamp
                     if (lastScanTimestamp > 0L) {
-                        val modifiedSongs = queryMediaStore(lastScanTimestamp)
+                        val modifiedSongs = querySongsFromMediaStore(modifiedAfter = lastScanTimestamp)
                         for (song in modifiedSongs) {
                             val dbInfo = roomSongsInfo[song.id]
-                            if (dbInfo == null || song.dateModified > dbInfo.dateModified) {
+                            if ((dbInfo == null) || (song.dateModified > dbInfo.dateModified)) {
                                 if (upsertedIds.add(song.id)) {
                                     toUpsert.add(song)
                                 }
@@ -156,7 +182,7 @@ class MediaStoreScannerImpl(
                 }
             } else {
                 Timber.w("MediaStore ID query failed; performing safe incremental query")
-                val changed = queryMediaStore(if (isFullScan) 0L else lastScanTimestamp)
+                val changed = querySongsFromMediaStore(modifiedAfter = if (isFullScan) 0L else lastScanTimestamp)
                 toUpsert.addAll(changed)
             }
 
@@ -202,7 +228,6 @@ class MediaStoreScannerImpl(
             Timber.e(e, "Error during scan")
         } finally {
             _isLoading.value = false
-            scanMutex.unlock()
         }
     }
 
@@ -225,76 +250,64 @@ class MediaStoreScannerImpl(
         return set
     }
 
-    private fun queryMediaStore(lastScan: Long = 0L): List<Song> {
-        val list = mutableListOf<Song>()
+    /**
+     * Unified MediaStore query — replaces the former duplicated `queryMediaStore` /
+     * `queryMediaStoreByIds` pair.  All cursor projection, column mapping, and row parsing
+     * live here exactly once.
+     *
+     * @param modifiedAfter  When > 0, adds a `DATE_MODIFIED > ?` filter for incremental scans.
+     * @param byIds          When non-empty, queries only the given MediaStore IDs (in chunks).
+     */
+    private fun querySongsFromMediaStore(
+        modifiedAfter: Long = 0L,
+        byIds: Set<Long> = emptySet(),
+    ): List<Song> {
+        val result = mutableListOf<Song>()
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATE_MODIFIED,
-            MediaStore.Audio.Media.TRACK
-        )
-        val selection: String
-        val selectionArgs: Array<String>?
-        if (lastScan > 0L) {
-            selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DATE_MODIFIED} > ?"
-            selectionArgs = arrayOf(lastScan.toString())
-        } else {
-            selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-            selectionArgs = null
-        }
         val albumArtBaseUri = MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI
 
-        try {
-            app.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
-                val cols = SongColumnIndices.from(cursor)
-                while (cursor.moveToNext()) {
-                    list.add(parseSongFromCursor(cursor, uri, albumArtBaseUri, cols))
+        if (byIds.isNotEmpty()) {
+            byIds.chunked(200).forEach { chunk ->
+                val placeholders = chunk.joinToString(",") { "?" }
+                val selection = "${MediaStore.Audio.Media._ID} IN ($placeholders) AND ${MediaStore.Audio.Media.IS_MUSIC} != 0"
+                val selectionArgs = chunk.map { it.toString() }.toTypedArray()
+                try {
+                    app.contentResolver.query(uri, songProjection, selection, selectionArgs, null)
+                        ?.use { cursor ->
+                            val cols = SongColumnIndices.from(cursor)
+                            while (cursor.moveToNext()) {
+                                result.add(parseSong(cursor, uri, albumArtBaseUri, cols))
+                            }
+                        }
+                } catch (e: Exception) {
+                    Timber.e(e, "MediaStore chunk query failed")
                 }
             }
+            return result
+        }
+
+        val (selection, selectionArgs) = if (modifiedAfter > 0L) {
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DATE_MODIFIED} > ?" to
+                arrayOf(modifiedAfter.toString())
+        } else {
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0" to null
+        }
+
+        try {
+            app.contentResolver.query(uri, songProjection, selection, selectionArgs, null)
+                ?.use { cursor ->
+                    val cols = SongColumnIndices.from(cursor)
+                    while (cursor.moveToNext()) {
+                        result.add(parseSong(cursor, uri, albumArtBaseUri, cols))
+                    }
+                }
         } catch (e: Exception) {
             Timber.e(e, "MediaStore query failed")
         }
-        return list
+        return result
     }
 
-    private fun queryMediaStoreByIds(ids: Set<Long>): List<Song> {
-        if (ids.isEmpty()) return emptyList()
-        val list = mutableListOf<Song>()
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATE_MODIFIED,
-            MediaStore.Audio.Media.TRACK
-        )
-        val albumArtBaseUri = MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI
-
-        ids.chunked(200).forEach { chunk ->
-            val placeholders = chunk.joinToString(",") { "?" }
-            val selection = "${MediaStore.Audio.Media._ID} IN ($placeholders) AND ${MediaStore.Audio.Media.IS_MUSIC} != 0"
-            val selectionArgs = chunk.map { it.toString() }.toTypedArray()
-            try {
-                app.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
-                    val cols = SongColumnIndices.from(cursor)
-                    while (cursor.moveToNext()) {
-                        list.add(parseSongFromCursor(cursor, uri, albumArtBaseUri, cols))
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "MediaStore chunk query failed")
-            }
-        }
-        return list
-    }
+    // ── Cursor helpers ────────────────────────────────────────────────────────
 
     private class SongColumnIndices(
         val idCol: Int,
@@ -304,7 +317,7 @@ class MediaStoreScannerImpl(
         val albumIdCol: Int,
         val durationCol: Int,
         val dateModifiedCol: Int,
-        val trackCol: Int
+        val trackCol: Int,
     ) {
         companion object {
             fun from(cursor: Cursor) = SongColumnIndices(
@@ -315,16 +328,16 @@ class MediaStoreScannerImpl(
                 albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID),
                 durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION),
                 dateModifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED),
-                trackCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
+                trackCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK),
             )
         }
     }
 
-    private fun parseSongFromCursor(
+    private fun parseSong(
         cursor: Cursor,
         uri: Uri,
         albumArtBaseUri: Uri,
-        cols: SongColumnIndices
+        cols: SongColumnIndices,
     ): Song {
         val id = cursor.getLong(cols.idCol)
         val albumId = cursor.getLong(cols.albumIdCol)
@@ -342,7 +355,7 @@ class MediaStoreScannerImpl(
             artworkUri = artworkUri,
             duration = cursor.getLong(cols.durationCol),
             dateModified = cursor.getLong(cols.dateModifiedCol),
-            track = cursor.getInt(cols.trackCol)
+            track = cursor.getInt(cols.trackCol),
         )
     }
 }

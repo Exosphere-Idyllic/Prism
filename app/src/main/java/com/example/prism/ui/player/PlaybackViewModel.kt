@@ -5,6 +5,8 @@ import com.example.prism.data.entity.Song
 import com.example.prism.player.PlaybackManager
 import kotlinx.coroutines.flow.StateFlow
 
+import com.example.prism.player.ProgressState
+
 class PlaybackViewModel(
     private val playbackManager: PlaybackManager,
 ) : ViewModel() {
@@ -33,8 +35,3 @@ class PlaybackViewModel(
         playbackManager.seekTo(positionMs)
     }
 }
-
-data class ProgressState(
-    val currentPosition: Long = 0L,
-    val duration: Long = 0L
-)

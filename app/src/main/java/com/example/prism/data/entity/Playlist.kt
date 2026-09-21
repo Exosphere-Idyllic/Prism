@@ -5,12 +5,11 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-import com.example.prism.data.entity.Song
 
 @Immutable
 @Entity(
     tableName = "playlists",
-    indices = [Index(value = ["name"], unique = true)]
+    indices = [Index(value = ["name"], unique = true)],
 )
 data class Playlist(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -38,8 +37,8 @@ data class Playlist(
         )
     ],
     indices = [
-        androidx.room.Index(value = ["songId"]),
-        androidx.room.Index(value = ["playlistId", "position"])
+        Index(value = ["songId"]),
+        Index(value = ["playlistId", "position"])
     ]
 )
 data class PlaylistSong(

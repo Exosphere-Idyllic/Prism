@@ -54,7 +54,7 @@ fun SongArtwork(
 ) {
     val context = LocalContext.current
 
-    val imageRequest = remember(song?.id, song?.artworkUri, song?.customArtworkUri, song?.dateModified, size, crossfade) {
+    val imageRequest = remember(context, song?.id, song?.artworkUri, song?.customArtworkUri, song?.dateModified, size, crossfade) {
         song?.let {
             ImageRequest.Builder(context)
                 .data(SongArtworkParams(song = it, size = size))
@@ -106,7 +106,7 @@ fun AlbumArtwork(
 ) {
     val context = LocalContext.current
 
-    val imageRequest = remember(albumId, coverUri, customCoverUri, size, crossfade) {
+    val imageRequest = remember(context, albumId, coverUri, customCoverUri, size, crossfade) {
         ImageRequest.Builder(context)
             .data(
                 AlbumArtworkParams(

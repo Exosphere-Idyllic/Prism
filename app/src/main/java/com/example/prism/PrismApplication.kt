@@ -8,7 +8,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.AlbumArtworkKeyer
-import com.example.prism.domain.repository.MusicRepository
+import com.example.prism.domain.repository.ScannerRepository
 import com.example.prism.data.artwork.SongArtworkKeyer
 import com.example.prism.core.di.appModule
 import com.example.prism.BuildConfig
@@ -34,11 +34,8 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             modules(appModule)
         }
 
-        val repository: MusicRepository = get()
-        repository.startObserving()
-
-        // Register custom ImageLoader with Coil 3's singleton manager
-        SingletonImageLoader.setSafe(this)
+        val scannerRepository: ScannerRepository = get()
+        scannerRepository.startObserving()
     }
 
     override fun newImageLoader(context: Context): ImageLoader {
