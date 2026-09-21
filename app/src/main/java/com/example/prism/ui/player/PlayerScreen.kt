@@ -61,7 +61,12 @@ import com.example.prism.ui.theme.AppAccentSoft
 import com.example.prism.ui.theme.AppSurface2
 import com.example.prism.ui.theme.AppTextPrimary
 import com.example.prism.ui.theme.AppTextSecondary
+import com.example.prism.ui.theme.AppBgTop
+import com.example.prism.ui.theme.AppBgBottom
 import com.example.prism.ui.theme.PlayerBackgroundBrush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.animateColorAsState
 import kotlinx.coroutines.flow.StateFlow
 import org.koin.androidx.compose.koinViewModel
 
@@ -134,10 +139,27 @@ fun PlayerContent(
     var showLyrics by remember { mutableStateOf(false) }
     val progress by progressState.collectAsStateWithLifecycle()
 
+    var extractedColor by remember { mutableStateOf<Color?>(null) }
+    LaunchedEffect(currentSong?.id) {
+        extractedColor = null
+    }
+
+    val animatedTopColor by animateColorAsState(
+        targetValue = extractedColor?.copy(alpha = 0.35f) ?: AppBgTop,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        label = "playerBgTopAnimation"
+    )
+
+    val playerBackground = remember(animatedTopColor) {
+        Brush.verticalGradient(
+            colors = listOf(animatedTopColor, AppBgBottom)
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(brush = PlayerBackgroundBrush),
+            .background(brush = playerBackground),
     ) {
         Column(
             modifier = Modifier
@@ -242,7 +264,16 @@ fun PlayerContent(
                                         song = crossfadeSong,
                                         contentDescription = stringResource(R.string.cd_album_art),
                                         size = 512,
-                                        crossfade = true,
+                                        crossfade = false,
+                                        onPaletteLoaded = { palette ->
+                                            val swatch = palette.dominantSwatch
+                                                ?: palette.vibrantSwatch
+                                                ?: palette.darkVibrantSwatch
+                                                ?: palette.lightVibrantSwatch
+                                            swatch?.rgb?.let { rgb ->
+                                                extractedColor = Color(rgb)
+                                            }
+                                        },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                     // Edit badge in bottom-end corner

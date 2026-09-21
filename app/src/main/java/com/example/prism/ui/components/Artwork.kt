@@ -7,13 +7,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import coil3.compose.AsyncImage
+import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
-import coil3.request.crossfade
 import com.example.prism.R
 import com.example.prism.data.artwork.AlbumArtworkParams
-import com.example.prism.data.entity.Song
 import com.example.prism.data.artwork.SongArtworkParams
+import com.example.prism.data.entity.Song
+import com.skydoves.landscapist.ImageOptions
+import com.skydoves.landscapist.coil3.CoilImage
 
 /**
  * Drawable resource IDs for the 5 default cover art variations.
@@ -40,9 +41,16 @@ private fun defaultCoverRes(stableId: Any): Int {
 /**
  * Displays artwork for a [Song].
  *
- * URI resolution and caching is handled by [com.example.prism.data.artwork.AlbumArtFetcher] inside Coil.
+ * Internally uses Landscapist [CoilImage] backed by the app-wide [coil3.SingletonImageLoader]
+ * configured in [com.example.prism.PrismApplication] — no new ImageLoader is ever created here,
+ * preserving all custom Keyers, Fetchers, and caches (memory + disk).
+ *
  * When no artwork is available (fetcher returns null / error), a deterministic
  * default cover drawable is shown based on the song's ID.
+ *
+ * The [crossfade] parameter is retained for call-site API compatibility; crossfade
+ * animations at the player level are handled externally via Compose [androidx.compose.animation.Crossfade]
+ * to avoid double-animation on [SongArtwork] instances inside animated containers.
  */
 @Composable
 fun SongArtwork(
@@ -51,33 +59,47 @@ fun SongArtwork(
     modifier: Modifier = Modifier,
     size: Int = 128,
     crossfade: Boolean = false,
+    onPaletteLoaded: ((com.kmpalette.palette.graphics.Palette) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
-    val imageRequest = remember(context, song?.id, song?.artworkUri, song?.customArtworkUri, song?.dateModified, size, crossfade) {
-        song?.let {
+    if (song != null) {
+        val fallbackPainter = painterResource(defaultCoverRes(song.id))
+        // Re-use the singleton loader configured in PrismApplication (keyers, fetchers, caches).
+        val imageLoader = SingletonImageLoader.get(context)
+        val imageRequest = remember(context, song.id, song.artworkUri, song.customArtworkUri, song.dateModified, size) {
             ImageRequest.Builder(context)
-                .data(SongArtworkParams(song = it, size = size))
-                .crossfade(crossfade)
+                .data(SongArtworkParams(song = song, size = size))
                 .size(size)
                 .build()
         }
-    }
 
-    if ((imageRequest != null) && (song != null)) {
-        val fallbackPainter = painterResource(defaultCoverRes(song.id))
+        val component = com.skydoves.landscapist.components.rememberImageComponent {
+            if (onPaletteLoaded != null) {
+                +com.skydoves.landscapist.palette.PalettePlugin { palette ->
+                    onPaletteLoaded(palette)
+                }
+            }
+        }
 
-        AsyncImage(
-            model = imageRequest,
-            contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
+        CoilImage(
+            imageModel = { imageRequest },
+            imageLoader = { imageLoader },
+            imageOptions = ImageOptions(contentScale = ContentScale.Crop),
+            component = component,
             modifier = modifier,
-            placeholder = fallbackPainter,
-            error = fallbackPainter,
-            fallback = fallbackPainter,
+            failure = {
+                Image(
+                    painter = fallbackPainter,
+                    contentDescription = contentDescription,
+                    contentScale = ContentScale.Crop,
+                    modifier = modifier,
+                )
+            },
+            previewPlaceholder = painterResource(defaultCoverRes(song.id)),
         )
     } else {
-        // No song at all — show a static default
+        // No song at all — show a static default.
         Image(
             painter = painterResource(DEFAULT_COVERS[0]),
             contentDescription = contentDescription,
@@ -90,7 +112,10 @@ fun SongArtwork(
 /**
  * Displays artwork for an album.
  *
- * URI resolution and caching is handled by [com.example.prism.data.artwork.AlbumArtFetcher] inside Coil.
+ * Internally uses Landscapist [CoilImage] backed by the app-wide [coil3.SingletonImageLoader]
+ * configured in [com.example.prism.PrismApplication] — no new ImageLoader is ever created here,
+ * preserving all custom Keyers, Fetchers, and caches (memory + disk).
+ *
  * When no artwork is available, a deterministic default cover drawable is shown
  * based on the album's ID.
  */
@@ -105,8 +130,10 @@ fun AlbumArtwork(
     crossfade: Boolean = false,
 ) {
     val context = LocalContext.current
+    val fallbackPainter = painterResource(defaultCoverRes(albumId))
+    val imageLoader = SingletonImageLoader.get(context)
 
-    val imageRequest = remember(context, albumId, coverUri, customCoverUri, size, crossfade) {
+    val imageRequest = remember(context, albumId, coverUri, customCoverUri, size) {
         ImageRequest.Builder(context)
             .data(
                 AlbumArtworkParams(
@@ -116,20 +143,24 @@ fun AlbumArtwork(
                     size = size,
                 )
             )
-            .crossfade(crossfade)
             .size(size)
             .build()
     }
 
-    val fallbackPainter = painterResource(defaultCoverRes(albumId))
-
-    AsyncImage(
-        model = imageRequest,
-        contentDescription = contentDescription,
-        contentScale = ContentScale.Crop,
+    CoilImage(
+        imageModel = { imageRequest },
+        imageLoader = { imageLoader },
+        imageOptions = ImageOptions(contentScale = ContentScale.Crop),
         modifier = modifier,
-        placeholder = fallbackPainter,
-        error = fallbackPainter,
-        fallback = fallbackPainter,
+        failure = {
+            Image(
+                painter = fallbackPainter,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = modifier,
+            )
+        },
+        previewPlaceholder = painterResource(defaultCoverRes(albumId)),
     )
 }
+
