@@ -196,7 +196,7 @@ class AlbumArtFetcher(
     private fun fetchSystemThumbnail(uri: android.net.Uri, signal: CancellationSignal): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
-            val thumbSize = MASTER_ARTWORK_SIZE.coerceAtLeast(requestedSize)
+            val thumbSize = if (requestedSize > 0) requestedSize.coerceIn(64, 1024) else MASTER_ARTWORK_SIZE
             context.contentResolver.loadThumbnail(
                 uri,
                 Size(thumbSize, thumbSize),

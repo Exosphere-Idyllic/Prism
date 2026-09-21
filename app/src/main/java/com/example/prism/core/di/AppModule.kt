@@ -54,6 +54,16 @@ val appModule = module {
         )
     }
 
+    single { com.example.prism.data.preferences.EqualizerPreferences(context = get()) }
+
+    single<com.example.prism.domain.repository.EqualizerRepository> {
+        com.example.prism.data.repository.EqualizerRepositoryImpl(
+            preferences = get(),
+            scope = get(),
+            dispatchers = get(),
+        )
+    }
+
     viewModel {
         LibraryViewModel(
             libraryRepository = get<LibraryRepository>(),

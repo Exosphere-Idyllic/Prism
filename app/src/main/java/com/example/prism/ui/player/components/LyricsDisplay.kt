@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -53,12 +54,14 @@ import com.example.prism.ui.theme.AppTextSecondary
 @Composable
 fun LyricsDisplay(
     songLyrics: SongLyrics?,
-    currentPositionMs: Long,
     onSelectSource: (LyricsSource) -> Unit,
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    currentPositionMs: Long = 0L,
+    currentPositionProvider: (() -> Long)? = null,
 ) {
     val activeContent = songLyrics?.activeLyrics
+    val positionProvider = currentPositionProvider ?: { currentPositionMs }
 
     Box(
         modifier = modifier
@@ -78,7 +81,7 @@ fun LyricsDisplay(
             } else if (activeContent.isSynced) {
                 SyncedLyricsView(
                     lines = activeContent.lines,
-                    currentPositionMs = currentPositionMs,
+                    currentPositionProvider = positionProvider,
                     onSeekTo = onSeekTo,
                     modifier = Modifier.weight(1f),
                 )
@@ -167,15 +170,18 @@ private fun LyricsHeader(
 @Composable
 private fun SyncedLyricsView(
     lines: List<LyricsLine>,
-    currentPositionMs: Long,
+    currentPositionProvider: () -> Long,
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
 
-    // Find active line index
-    val activeIndex = remember(lines, currentPositionMs) {
-        lines.indexOfLast { it.timestampMs <= currentPositionMs }
+    // Find active line index via derivedStateOf so recomposition only fires when active index changes
+    val activeIndex by remember(lines) {
+        derivedStateOf {
+            val pos = currentPositionProvider()
+            lines.indexOfLast { it.timestampMs <= pos }
+        }
     }
 
     LaunchedEffect(activeIndex) {
@@ -191,27 +197,44 @@ private fun SyncedLyricsView(
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        itemsIndexed(lines) { index, line ->
-            val isActive = index == activeIndex
-            val textColor by animateColorAsState(
-                targetValue = if (isActive) Color.White else AppTextSecondary.copy(alpha = 0.5f),
-                animationSpec = tween(durationMillis = 250),
-                label = "lyricsColor",
-            )
-
-            Text(
-                text = line.text,
-                color = textColor,
-                fontSize = if (isActive) 20.sp else 16.sp,
-                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSeekTo(line.timestampMs) }
-                    .padding(vertical = 4.dp),
+        itemsIndexed(
+            items = lines,
+            key = { index, line -> "${line.timestampMs}_$index" },
+            contentType = { _, _ -> "synced_lyrics_line" }
+        ) { index, line ->
+            SyncedLyricsLineItem(
+                line = line,
+                isActive = index == activeIndex,
+                onSeekTo = onSeekTo,
             )
         }
     }
+}
+
+@Composable
+private fun SyncedLyricsLineItem(
+    line: LyricsLine,
+    isActive: Boolean,
+    onSeekTo: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val textColor by animateColorAsState(
+        targetValue = if (isActive) Color.White else AppTextSecondary.copy(alpha = 0.5f),
+        animationSpec = tween(durationMillis = 250),
+        label = "lyricsColor",
+    )
+
+    Text(
+        text = line.text,
+        color = textColor,
+        fontSize = if (isActive) 20.sp else 16.sp,
+        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onSeekTo(line.timestampMs) }
+            .padding(vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -227,7 +250,11 @@ private fun UnsyncedLyricsView(
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        itemsIndexed(lines) { _, line ->
+        itemsIndexed(
+            items = lines,
+            key = { index, line -> "${index}_${line.text.hashCode()}" },
+            contentType = { _, _ -> "unsynced_lyrics_line" }
+        ) { _, line ->
             Text(
                 text = line.text,
                 color = AppTextPrimary,

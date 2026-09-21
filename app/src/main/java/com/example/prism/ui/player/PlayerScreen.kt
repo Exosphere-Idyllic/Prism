@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -137,7 +138,6 @@ fun PlayerContent(
     }
 
     var showLyrics by remember { mutableStateOf(false) }
-    val progress by progressState.collectAsStateWithLifecycle()
 
     var extractedColor by remember { mutableStateOf<Color?>(null) }
     LaunchedEffect(currentSong?.id) {
@@ -150,16 +150,28 @@ fun PlayerContent(
         label = "playerBgTopAnimation"
     )
 
-    val playerBackground = remember(animatedTopColor) {
-        Brush.verticalGradient(
-            colors = listOf(animatedTopColor, AppBgBottom)
-        )
+    val onPaletteLoaded: (com.kmpalette.palette.graphics.Palette) -> Unit = remember {
+        { palette ->
+            val swatch = palette.dominantSwatch
+                ?: palette.vibrantSwatch
+                ?: palette.darkVibrantSwatch
+                ?: palette.lightVibrantSwatch
+            swatch?.rgb?.let { rgb ->
+                extractedColor = Color(rgb)
+            }
+        }
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(brush = playerBackground),
+            .drawBehind {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(animatedTopColor, AppBgBottom)
+                    )
+                )
+            },
     ) {
         Column(
             modifier = Modifier
@@ -236,7 +248,7 @@ fun PlayerContent(
                     if (isLyricsVisible) {
                         LyricsDisplay(
                             songLyrics = songLyrics,
-                            currentPositionMs = progress.currentPosition,
+                            currentPositionProvider = { progressState.value.currentPosition },
                             onSelectSource = onSelectLyricsSource,
                             onSeekTo = onSeek,
                             modifier = Modifier.fillMaxSize(),
@@ -265,15 +277,7 @@ fun PlayerContent(
                                         contentDescription = stringResource(R.string.cd_album_art),
                                         size = 512,
                                         crossfade = false,
-                                        onPaletteLoaded = { palette ->
-                                            val swatch = palette.dominantSwatch
-                                                ?: palette.vibrantSwatch
-                                                ?: palette.darkVibrantSwatch
-                                                ?: palette.lightVibrantSwatch
-                                            swatch?.rgb?.let { rgb ->
-                                                extractedColor = Color(rgb)
-                                            }
-                                        },
+                                        onPaletteLoaded = onPaletteLoaded,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                     // Edit badge in bottom-end corner

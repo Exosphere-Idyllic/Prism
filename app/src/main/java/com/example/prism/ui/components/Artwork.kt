@@ -2,10 +2,13 @@ package com.example.prism.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
@@ -64,9 +67,7 @@ fun SongArtwork(
     val context = LocalContext.current
 
     if (song != null) {
-        val fallbackPainter = painterResource(defaultCoverRes(song.id))
-        // Re-use the singleton loader configured in PrismApplication (keyers, fetchers, caches).
-        val imageLoader = SingletonImageLoader.get(context)
+        val imageLoader = remember(context) { SingletonImageLoader.get(context) }
         val imageRequest = remember(context, song.id, song.artworkUri, song.customArtworkUri, song.dateModified, size) {
             ImageRequest.Builder(context)
                 .data(SongArtworkParams(song = song, size = size))
@@ -74,14 +75,16 @@ fun SongArtwork(
                 .build()
         }
 
+        val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
         val component = com.skydoves.landscapist.components.rememberImageComponent {
             if (onPaletteLoaded != null) {
                 +com.skydoves.landscapist.palette.PalettePlugin { palette ->
-                    onPaletteLoaded(palette)
+                    currentOnPaletteLoaded?.invoke(palette)
                 }
             }
         }
 
+        val isInspectionMode = LocalInspectionMode.current
         CoilImage(
             imageModel = { imageRequest },
             imageLoader = { imageLoader },
@@ -90,13 +93,13 @@ fun SongArtwork(
             modifier = modifier,
             failure = {
                 Image(
-                    painter = fallbackPainter,
+                    painter = painterResource(defaultCoverRes(song.id)),
                     contentDescription = contentDescription,
                     contentScale = ContentScale.Crop,
                     modifier = modifier,
                 )
             },
-            previewPlaceholder = painterResource(defaultCoverRes(song.id)),
+            previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(song.id)) else null,
         )
     } else {
         // No song at all — show a static default.
@@ -130,8 +133,7 @@ fun AlbumArtwork(
     crossfade: Boolean = false,
 ) {
     val context = LocalContext.current
-    val fallbackPainter = painterResource(defaultCoverRes(albumId))
-    val imageLoader = SingletonImageLoader.get(context)
+    val imageLoader = remember(context) { SingletonImageLoader.get(context) }
 
     val imageRequest = remember(context, albumId, coverUri, customCoverUri, size) {
         ImageRequest.Builder(context)
@@ -147,6 +149,7 @@ fun AlbumArtwork(
             .build()
     }
 
+    val isInspectionMode = LocalInspectionMode.current
     CoilImage(
         imageModel = { imageRequest },
         imageLoader = { imageLoader },
@@ -154,13 +157,13 @@ fun AlbumArtwork(
         modifier = modifier,
         failure = {
             Image(
-                painter = fallbackPainter,
+                painter = painterResource(defaultCoverRes(albumId)),
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Crop,
                 modifier = modifier,
             )
         },
-        previewPlaceholder = painterResource(defaultCoverRes(albumId)),
+        previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(albumId)) else null,
     )
 }
 
