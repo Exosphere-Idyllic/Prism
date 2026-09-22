@@ -2,7 +2,6 @@ package com.example.prism.data.db
 
 import androidx.room.Dao
 import androidx.room.Query
-import androidx.room.Upsert
 import com.example.prism.data.entity.Artist
 import kotlinx.coroutines.flow.Flow
 
@@ -13,9 +12,6 @@ interface ArtistDao {
 
     @Query("SELECT * FROM artists WHERE name LIKE :query ORDER BY name ASC")
     fun searchArtists(query: String): Flow<List<Artist>>
-
-    @Upsert
-    suspend fun insertAll(artists: List<Artist>)
 
     @Query("DELETE FROM artists")
     suspend fun deleteAll()

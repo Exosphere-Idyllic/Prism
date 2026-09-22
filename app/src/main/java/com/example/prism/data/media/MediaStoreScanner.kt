@@ -5,8 +5,6 @@ import android.content.ContentUris
 import android.database.ContentObserver
 import android.database.Cursor
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.provider.MediaStore
 import androidx.room.withTransaction
 import com.example.prism.data.db.AppDatabase
@@ -46,7 +44,6 @@ class MediaStoreScannerImpl(
 ) : MediaStoreScanner {
 
     private val songDao = database.songDao()
-    private val playlistDao = database.playlistDao()
     private val metadataUpdater = IncrementalMetadataUpdater(database)
 
     private val _isLoading = MutableStateFlow(value = false)
@@ -100,7 +97,7 @@ class MediaStoreScannerImpl(
 
     override fun startObserving() {
         if (contentObserver == null) {
-            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            val observer = object : ContentObserver(null) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
                     contentObserverEvents.tryEmit(Unit)
                 }
@@ -207,7 +204,6 @@ class MediaStoreScannerImpl(
                     if (toDelete.isNotEmpty()) {
                         toDelete.chunked(200).forEach { chunk ->
                             songDao.deleteSongsByIds(chunk)
-                            playlistDao.deletePlaylistSongsForSongIds(chunk)
                         }
                     }
 
@@ -219,7 +215,7 @@ class MediaStoreScannerImpl(
 
             if (toUpsert.isNotEmpty() || toDelete.isNotEmpty() || isFullScan) {
                 val changedSongIds = (toUpsert.map { it.id } + toDelete).distinct()
-                val changedAlbumIds = (toUpsert.map { it.albumId } + songsToDelete.map { it.albumId }).distinct()
+                val changedAlbumIds = (toUpsert.map { it.albumId } + oldSongs.map { it.albumId } + songsToDelete.map { it.albumId }).distinct()
                 onScanChanged?.invoke(changedSongIds, changedAlbumIds, isFullScan)
             }
 

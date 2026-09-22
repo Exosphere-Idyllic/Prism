@@ -3,6 +3,7 @@ package com.example.prism.data.artwork
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.CancellationSignal
@@ -12,42 +13,37 @@ import androidx.core.net.toUri
 import coil3.ImageLoader
 import coil3.asImage
 import coil3.decode.DataSource
-import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
 import coil3.fetch.ImageFetchResult
-import coil3.fetch.SourceFetchResult
 import coil3.request.Options
-import okio.Buffer
-import okio.FileSystem
-import okio.source
+import java.io.File
 import java.util.Collections
 import java.util.LinkedHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
- * Coil [Fetcher] that loads artwork using a multi-strategy fallback approach.
+ * High-performance Coil [Fetcher] that loads artwork using a multi-strategy fallback approach.
  *
- * ## Fetch strategies (in order)
+ * All successful fetches decode directly to a sampled, memory-efficient [Bitmap] (RGB_565 for thumbnails)
+ * returning an [ImageFetchResult], bypassing intermediate Okio buffer copies and format sniffers.
  *
+ * ## Fetch strategies:
  * ### For Songs:
  *  1. Custom user-selected artwork URI ([customArtworkUri] — HTTP/HTTPS, file://, or content://)
- *  2. `ContentResolver.loadThumbnail` (API 29+) by song MediaStore URI — OS-level cached thumbnail
- *  3. `ContentResolver.loadThumbnail` (API 29+) by album ID via [MediaStore.Audio.Albums]
- *  4. Embedded ID3 artwork from the song file itself via [MediaMetadataRetriever]
- *  5. Fallback to generic [MediaStore.Audio.Albums] artwork by albumId content URI
- *  6. Returns `null` — the UI shows a hardcoded default drawable
+ *  2. `ContentResolver.loadThumbnail` (API 29+) by song MediaStore URI
+ *  3. Embedded ID3 artwork from the song file itself via [MediaMetadataRetriever]
+ *  4. Fallback on API < 29 via album content URI
  *
  * ### For Albums:
  *  1. Custom user-selected cover URI ([customArtworkUri])
- *  2. `ContentResolver.loadThumbnail` (API 29+)
- *  3. Fallback [android.content.ContentResolver.openInputStream] on coverUri
- *  4. Returns `null` — the UI shows a hardcoded default drawable
+ *  2. Query representative song for the album and fetch its system thumbnail / embedded ID3 art
  */
 class AlbumArtFetcher(
     private val albumId: Long,
@@ -60,9 +56,6 @@ class AlbumArtFetcher(
 ) : Fetcher {
 
     companion object {
-        /** Maximum bytes read from a content/file stream for artwork. */
-        private const val MAX_STREAM_BYTES = 5L * 1024 * 1024 // 5 MB
-
         /** Standard master resolution for cached thumbnails. */
         private const val MASTER_ARTWORK_SIZE = 512
 
@@ -92,12 +85,12 @@ class AlbumArtFetcher(
         ): String {
             val customHash = if (customArtworkUri.isNotEmpty()) "_c${customArtworkUri.hashCode()}" else ""
             val modHash = if (dateModified > 0L) "_m$dateModified" else ""
-            return if (mediaUri != null) "song_${albumId}_${mediaUri.hashCode()}$customHash$modHash"
+            return if (!mediaUri.isNullOrEmpty()) "song_${albumId}_${mediaUri.hashCode()}$customHash$modHash"
             else "album_${albumId}_${artworkUri.hashCode()}$customHash"
         }
 
         /**
-         * Clears the in-memory negative cache, e.g. after a MediaStore rescan.
+         * Clears the in-memory negative cache, e.g. after a MediaStore rescan or artwork update.
          */
         fun clearNegativeCache() {
             noArtworkCache.clear()
@@ -108,6 +101,39 @@ class AlbumArtFetcher(
                 .connectTimeout(10L, TimeUnit.SECONDS)
                 .readTimeout(15L, TimeUnit.SECONDS)
                 .build()
+        }
+
+        /**
+         * Decodes and downsamples a [ByteArray] to the requested resolution using RGB_565
+         * to cut heap memory allocation in half and avoid GC pauses during fast scrolling.
+         */
+        fun decodeSampledBitmap(data: ByteArray, targetSize: Int): Bitmap? {
+            if (data.isEmpty()) return null
+            val reqSize = if (targetSize > 0) targetSize.coerceIn(64, 1024) else MASTER_ARTWORK_SIZE
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeByteArray(data, 0, data.size, boundsOptions)
+
+            var inSampleSize = 1
+            val height = boundsOptions.outHeight
+            val width = boundsOptions.outWidth
+            if (height > reqSize || width > reqSize) {
+                while ((height / (inSampleSize * 2)) >= reqSize && (width / (inSampleSize * 2)) >= reqSize) {
+                    inSampleSize *= 2
+                }
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            return try {
+                BitmapFactory.decodeByteArray(data, 0, data.size, decodeOptions)
+            } catch (_: OutOfMemoryError) {
+                null
+            }
         }
     }
 
@@ -129,7 +155,7 @@ class AlbumArtFetcher(
             fetchAlbumArtwork(signal)
         }
 
-        if (result == null) {
+        if (result == null && coroutineContext.isActive && !signal.isCanceled) {
             noArtworkCache.add(cacheKey)
         }
 
@@ -139,28 +165,24 @@ class AlbumArtFetcher(
     // ── Song artwork ─────────────────────────────────────────────────────────
 
     private fun fetchSongArtwork(signal: CancellationSignal): FetchResult? {
-        // Strategy 1: Custom user-selected artwork URI (highest priority — supports content://, file://, http://, https:// via OkHttp)
+        // Strategy 1: Custom user-selected artwork URI (highest priority)
         if (customArtworkUri.isNotEmpty()) {
-            fetchStreamFromCustomUri(customArtworkUri)?.let { return it }
+            fetchFromCustomUri(customArtworkUri)?.let { return it }
         }
 
-        // Strategy 2: System thumbnail by song MediaStore URI (API 29+) — fast OS-level cache
+        // Strategy 2: System thumbnail by song MediaStore URI (API 29+)
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
             fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { return bitmapToResult(it) }
         }
 
-        // Strategy 3: System thumbnail by albumId (API 29+)
-        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && (albumId > 0)) {
-            val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
-            fetchSystemThumbnail(albumUri, signal)?.let { return bitmapToResult(it) }
+        // Strategy 3: Embedded ID3 artwork via MediaMetadataRetriever
+        if (!mediaUri.isNullOrEmpty()) {
+            extractEmbeddedArtwork(mediaUri)?.let { return it }
         }
 
-        // Strategy 4: Embedded ID3 artwork via MediaMetadataRetriever (fallback)
-        mediaUri?.let { extractEmbeddedArtwork(it) }?.let { return it }
-
-        // Strategy 5: Fallback to generic album art URI
-        if (artworkUri.isNotEmpty()) {
-            fetchStreamFromContentUri(artworkUri)?.let { return it }
+        // Strategy 4: Fallback on legacy Android (< API 29)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && artworkUri.isNotEmpty()) {
+            fetchFromCustomUri(artworkUri)?.let { return it }
         }
 
         return null
@@ -169,30 +191,53 @@ class AlbumArtFetcher(
     // ── Album artwork ────────────────────────────────────────────────────────
 
     private fun fetchAlbumArtwork(signal: CancellationSignal): FetchResult? {
-        // Strategy 1: Custom user-selected cover URI (highest priority — supports content://, file://, http://, https:// via OkHttp)
+        // Strategy 1: Custom user-selected cover URI
         if (customArtworkUri.isNotEmpty()) {
-            fetchStreamFromCustomUri(customArtworkUri)?.let { return it }
+            fetchFromCustomUri(customArtworkUri)?.let { return it }
         }
 
-        // Strategy 2: System thumbnail (API 29+)
-        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && (albumId > 0)) {
-            val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
-            fetchSystemThumbnail(albumUri, signal)?.let { return bitmapToResult(it) }
+        // Strategy 2: Look up a song from this album and extract its artwork
+        if (albumId > 0) {
+            fetchAlbumSongArtwork(albumId, signal)?.let { return it }
         }
 
-        // Strategy 3: Fallback openInputStream on coverUri
-        if (artworkUri.isNotEmpty()) {
-            fetchStreamFromContentUri(artworkUri)?.let { return it }
+        // Strategy 3: Fallback on legacy Android (< API 29)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && artworkUri.isNotEmpty()) {
+            fetchFromCustomUri(artworkUri)?.let { return it }
         }
 
         return null
     }
 
+    private fun fetchAlbumSongArtwork(albumId: Long, signal: CancellationSignal): FetchResult? {
+        val songUri = querySongUriForAlbum(albumId) ?: return null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            fetchSystemThumbnail(songUri, signal)?.let { return bitmapToResult(it) }
+        }
+
+        return extractEmbeddedArtwork(songUri.toString())
+    }
+
+    private fun querySongUriForAlbum(albumId: Long): android.net.Uri? {
+        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Audio.Media._ID)
+        val selection = "${MediaStore.Audio.Media.ALBUM_ID} = ? AND ${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        val selectionArgs = arrayOf(albumId.toString())
+        return try {
+            context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(0)
+                    ContentUris.withAppendedId(uri, id)
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ── Shared strategies ────────────────────────────────────────────────────
 
-    /**
-     * Unified thumbnail loader for both song and album URIs (API 29+).
-     */
     private fun fetchSystemThumbnail(uri: android.net.Uri, signal: CancellationSignal): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
@@ -207,29 +252,33 @@ class AlbumArtFetcher(
         }
     }
 
-    private fun fetchStreamFromContentUri(uri: String): FetchResult? {
+    private fun fetchFromCustomUri(uri: String): FetchResult? {
         return try {
             val parsedUri = uri.toUri()
-            val stream = context.contentResolver.openInputStream(parsedUri)
-            stream?.let { streamToResult(it) }
+            val scheme = parsedUri.scheme?.lowercase()
+            when {
+                scheme == "http" || scheme == "https" -> fetchNetworkBitmap(uri)
+                scheme == "file" || scheme.isNullOrEmpty() -> {
+                    val path = parsedUri.path ?: uri
+                    val file = File(path)
+                    if (file.exists()) {
+                        val bytes = file.readBytes()
+                        decodeSampledBitmap(bytes, requestedSize)?.let { bitmapToResult(it) }
+                    } else null
+                }
+                else -> {
+                    context.contentResolver.openInputStream(parsedUri)?.use { stream ->
+                        val bytes = stream.readBytes()
+                        decodeSampledBitmap(bytes, requestedSize)?.let { bitmapToResult(it) }
+                    }
+                }
+            }
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun fetchStreamFromCustomUri(uri: String): FetchResult? {
-        return try {
-            val parsedUri = uri.toUri()
-            val scheme = parsedUri.scheme?.lowercase()
-            if (scheme == "http" || scheme == "https") {
-                fetchNetworkStream(uri)
-            } else {
-                fetchStreamFromContentUri(uri)
-            }
-        } catch (_: Exception) { null }
-    }
-
-    private fun fetchNetworkStream(url: String): FetchResult? {
+    private fun fetchNetworkBitmap(url: String): FetchResult? {
         return try {
             val request = Request.Builder().url(url).build()
             val response = okHttpClient.newCall(request).execute()
@@ -237,8 +286,8 @@ class AlbumArtFetcher(
                 response.close()
                 return null
             }
-            val body = response.body ?: return null
-            streamToResult(body.byteStream())
+            val bytes = response.body?.bytes() ?: return null
+            decodeSampledBitmap(bytes, requestedSize)?.let { bitmapToResult(it) }
         } catch (_: Exception) {
             null
         }
@@ -254,12 +303,7 @@ class AlbumArtFetcher(
                 retriever.setDataSource(context, parsedUri)
             }
             val picture = retriever.embeddedPicture ?: return null
-            val buffer = Buffer().write(picture)
-            SourceFetchResult(
-                source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
-                mimeType = null,
-                dataSource = DataSource.DISK,
-            )
+            decodeSampledBitmap(picture, requestedSize)?.let { bitmapToResult(it) }
         } catch (_: Exception) {
             null
         } finally {
@@ -271,23 +315,6 @@ class AlbumArtFetcher(
         return ImageFetchResult(
             image = bitmap.asImage(),
             isSampled = true,
-            dataSource = DataSource.DISK,
-        )
-    }
-
-    /**
-     * Converts an [java.io.InputStream] to an Okio-backed [SourceFetchResult].
-     * Uses [java.io.InputStream.source] (Okio extension) + buffering instead of a
-     * manual 8 KB copy loop, capping at [MAX_STREAM_BYTES] to avoid OOMs.
-     */
-    private fun streamToResult(stream: java.io.InputStream): SourceFetchResult {
-        val buffer = Buffer()
-        stream.use { input ->
-            buffer.write(input.source(), MAX_STREAM_BYTES)
-        }
-        return SourceFetchResult(
-            source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
-            mimeType = null,
             dataSource = DataSource.DISK,
         )
     }

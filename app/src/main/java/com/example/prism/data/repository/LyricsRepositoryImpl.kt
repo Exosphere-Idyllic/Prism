@@ -12,6 +12,7 @@ import com.example.prism.domain.model.LyricsContent
 import com.example.prism.domain.model.LyricsSource
 import com.example.prism.domain.model.SongLyrics
 import com.example.prism.domain.repository.LyricsRepository
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -22,16 +23,19 @@ import java.io.File
  * Follows the Single Responsibility Principle (SRP) and ISP.
  */
 class LyricsRepositoryImpl(
-    private val context: Context,
+    context: Context,
     private val database: AppDatabase,
     private val dispatchers: DispatcherProvider,
 ) : LyricsRepository {
 
+    private val context = context.applicationContext
     private val songDao = database.songDao()
 
     override suspend fun getLyrics(song: Song): SongLyrics = withContext(dispatchers.io) {
-        val lrcLyrics = resolveLrcLyrics(song)
-        val embeddedLyrics = resolveEmbeddedLyrics(song)
+        val lrcDeferred = async { resolveLrcLyrics(song) }
+        val embeddedDeferred = async { resolveEmbeddedLyrics(song) }
+        val lrcLyrics = lrcDeferred.await()
+        val embeddedLyrics = embeddedDeferred.await()
 
         SongLyrics(
             songId = song.id,
@@ -117,7 +121,8 @@ class LyricsRepositoryImpl(
                 // Check directory for file matching song title: <title>.lrc
                 val parent = mediaFile.parentFile
                 if (parent != null && parent.exists()) {
-                    val titleLrc = File(parent, "${song.title}.lrc")
+                    val safeTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                    val titleLrc = File(parent, "$safeTitle.lrc")
                     if (titleLrc.exists() && titleLrc.canRead()) {
                         return titleLrc.readText()
                     }

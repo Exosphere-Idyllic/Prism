@@ -5,8 +5,3 @@ data class SongSyncInfo(
     val dateModified: Long,
 )
 
-data class AlbumCustomCover(
-    val id: Long,
-    val customCoverUri: String,
-)
-

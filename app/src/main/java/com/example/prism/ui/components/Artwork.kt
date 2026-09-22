@@ -1,6 +1,7 @@
 package com.example.prism.ui.components
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -11,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import coil3.SingletonImageLoader
+import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.example.prism.R
 import com.example.prism.data.artwork.AlbumArtworkParams
@@ -44,16 +46,11 @@ private fun defaultCoverRes(stableId: Any): Int {
 /**
  * Displays artwork for a [Song].
  *
- * Internally uses Landscapist [CoilImage] backed by the app-wide [coil3.SingletonImageLoader]
- * configured in [com.example.prism.PrismApplication] — no new ImageLoader is ever created here,
- * preserving all custom Keyers, Fetchers, and caches (memory + disk).
+ * In LazyLists and normal UI components, uses highly optimized [AsyncImage] to avoid
+ * subcomposition overhead and frame-drops during fast scrolling.
  *
- * When no artwork is available (fetcher returns null / error), a deterministic
- * default cover drawable is shown based on the song's ID.
- *
- * The [crossfade] parameter is retained for call-site API compatibility; crossfade
- * animations at the player level are handled externally via Compose [androidx.compose.animation.Crossfade]
- * to avoid double-animation on [SongArtwork] instances inside animated containers.
+ * When [onPaletteLoaded] is provided (full player screen), delegates to Landscapist's [CoilImage]
+ * with [com.skydoves.landscapist.palette.PalettePlugin] to extract dynamic background colors.
  */
 @Composable
 fun SongArtwork(
@@ -75,32 +72,43 @@ fun SongArtwork(
                 .build()
         }
 
-        val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
-        val component = com.skydoves.landscapist.components.rememberImageComponent {
-            if (onPaletteLoaded != null) {
+        if (onPaletteLoaded != null) {
+            val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
+            val component = com.skydoves.landscapist.components.rememberImageComponent {
                 +com.skydoves.landscapist.palette.PalettePlugin { palette ->
-                    currentOnPaletteLoaded?.invoke(palette)
+                    currentOnPaletteLoaded.invoke(palette)
                 }
             }
-        }
 
-        val isInspectionMode = LocalInspectionMode.current
-        CoilImage(
-            imageModel = { imageRequest },
-            imageLoader = { imageLoader },
-            imageOptions = ImageOptions(contentScale = ContentScale.Crop),
-            component = component,
-            modifier = modifier,
-            failure = {
-                Image(
-                    painter = painterResource(defaultCoverRes(song.id)),
-                    contentDescription = contentDescription,
-                    contentScale = ContentScale.Crop,
-                    modifier = modifier,
-                )
-            },
-            previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(song.id)) else null,
-        )
+            val isInspectionMode = LocalInspectionMode.current
+            CoilImage(
+                imageModel = { imageRequest },
+                imageLoader = { imageLoader },
+                imageOptions = ImageOptions(contentScale = ContentScale.Crop),
+                component = component,
+                modifier = modifier,
+                failure = {
+                    Image(
+                        painter = painterResource(defaultCoverRes(song.id)),
+                        contentDescription = contentDescription,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                },
+                previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(song.id)) else null,
+            )
+        } else {
+            AsyncImage(
+                model = imageRequest,
+                imageLoader = imageLoader,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                placeholder = painterResource(defaultCoverRes(song.id)),
+                error = painterResource(defaultCoverRes(song.id)),
+                fallback = painterResource(defaultCoverRes(song.id)),
+                modifier = modifier,
+            )
+        }
     } else {
         // No song at all — show a static default.
         Image(
@@ -113,11 +121,7 @@ fun SongArtwork(
 }
 
 /**
- * Displays artwork for an album.
- *
- * Internally uses Landscapist [CoilImage] backed by the app-wide [coil3.SingletonImageLoader]
- * configured in [com.example.prism.PrismApplication] — no new ImageLoader is ever created here,
- * preserving all custom Keyers, Fetchers, and caches (memory + disk).
+ * Displays artwork for an album using lightweight [AsyncImage].
  *
  * When no artwork is available, a deterministic default cover drawable is shown
  * based on the album's ID.
@@ -149,21 +153,14 @@ fun AlbumArtwork(
             .build()
     }
 
-    val isInspectionMode = LocalInspectionMode.current
-    CoilImage(
-        imageModel = { imageRequest },
-        imageLoader = { imageLoader },
-        imageOptions = ImageOptions(contentScale = ContentScale.Crop),
+    AsyncImage(
+        model = imageRequest,
+        imageLoader = imageLoader,
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Crop,
+        placeholder = painterResource(defaultCoverRes(albumId)),
+        error = painterResource(defaultCoverRes(albumId)),
+        fallback = painterResource(defaultCoverRes(albumId)),
         modifier = modifier,
-        failure = {
-            Image(
-                painter = painterResource(defaultCoverRes(albumId)),
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                modifier = modifier,
-            )
-        },
-        previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(albumId)) else null,
     )
 }
-

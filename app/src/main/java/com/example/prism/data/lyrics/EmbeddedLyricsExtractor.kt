@@ -136,8 +136,9 @@ object EmbeddedLyricsExtractor {
         if (size < 7) return null
         val encodingByte = data[offset].toInt() and 0xFF
         val charset = getCharset(encodingByte)
-        val timeFormat = data[offset + 4].toInt() and 0xFF // 1 = ms, 2 = MPEG frames
-        if (timeFormat != 1) return null // Only ms timestamps supported
+        val timeFormat = data[offset + 4].toInt() and 0xFF
+        // ID3v2 spec: 2 = ms, 1 = MPEG frames (some taggers use 1 for ms)
+        if (timeFormat != 1 && timeFormat != 2) return null
 
         var pos = offset + 6
         val delimiterSize = if (encodingByte == 1 || encodingByte == 2) 2 else 1

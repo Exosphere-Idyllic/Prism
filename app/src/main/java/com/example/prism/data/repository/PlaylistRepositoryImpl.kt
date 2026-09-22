@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.db.AppDatabase
 import com.example.prism.data.entity.Playlist
-import com.example.prism.data.entity.PlaylistSong
 import com.example.prism.data.entity.Song
 import com.example.prism.domain.model.PlaylistWithCount
 import com.example.prism.domain.repository.PlaylistRepository
@@ -17,13 +16,17 @@ class PlaylistRepositoryImpl(
     private val dispatchers: DispatcherProvider,
 ) : PlaylistRepository {
 
+    companion object {
+        const val FAVORITES_PLAYLIST_NAME = "Favorites"
+    }
+
     private val playlistDao = database.playlistDao()
 
     override val playlistsWithCountsFlow: Flow<List<PlaylistWithCount>> =
         playlistDao.getAllPlaylistsWithCounts()
 
     override fun getFavoriteSongIds(): Flow<Set<String>> =
-        playlistDao.getPlaylistSongIdsFlow("Favorites").map { it.toSet() }
+        playlistDao.getPlaylistSongIdsFlow(FAVORITES_PLAYLIST_NAME).map { it.toSet() }
 
     /**
      * Toggles favorite status for [song].
@@ -36,7 +39,7 @@ class PlaylistRepositoryImpl(
     override suspend fun toggleFavorite(song: Song) = withContext(dispatchers.io) {
         database.withTransaction {
             val playlist = playlistDao.getOrCreateFavorites(System.currentTimeMillis())
-            val isFav = playlistDao.isSongInPlaylist(playlist.id, song.id) > 0
+            val isFav = playlistDao.isSongInPlaylist(playlist.id, song.id)
             if (isFav) {
                 playlistDao.deletePlaylistSong(playlist.id, song.id)
             } else {
@@ -77,4 +80,4 @@ class PlaylistRepositoryImpl(
 }
 
 fun isFavoritesPlaylist(name: String): Boolean =
-    name.equals("Favorites", ignoreCase = true)
+    name.equals(PlaylistRepositoryImpl.FAVORITES_PLAYLIST_NAME, ignoreCase = true)

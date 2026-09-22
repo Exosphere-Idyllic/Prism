@@ -28,8 +28,8 @@ class SongArtworkKeyer : Keyer<SongArtworkParams> {
  */
 class AlbumArtworkKeyer : Keyer<AlbumArtworkParams> {
     override fun key(data: AlbumArtworkParams, options: Options): String {
-        val customPart = if (data.customCoverUri.isNotEmpty()) "_custom_${data.customCoverUri}" else ""
-        val coverPart = if (data.coverUri.isNotEmpty()) "_cover_${data.coverUri}" else ""
-        return "album_art_${data.albumId}_${data.size}$customPart$coverPart"
+        val customPart = if (data.customCoverUri.isNotEmpty()) "_c${data.customCoverUri.hashCode()}" else ""
+        val coverPart = if (data.coverUri.isNotEmpty()) "_a${data.coverUri.hashCode()}" else ""
+        return "aa_${data.albumId}_${data.size}$customPart$coverPart"
     }
 }

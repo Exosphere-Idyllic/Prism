@@ -12,6 +12,11 @@ import com.example.prism.domain.repository.ScannerRepository
 import com.example.prism.data.artwork.SongArtworkKeyer
 import com.example.prism.core.di.appModule
 import com.example.prism.BuildConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
@@ -20,6 +25,8 @@ import org.koin.core.context.startKoin
 import timber.log.Timber
 
 class PrismApplication : Application(), SingletonImageLoader.Factory {
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
@@ -34,15 +41,22 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             modules(appModule)
         }
 
-        val scannerRepository: ScannerRepository = get()
-        scannerRepository.startObserving()
+        // Defer MediaStore scan so it doesn't compete with cold-start UI rendering.
+        // 800ms gives the main thread enough time to draw the first frame before we
+        // hit the disk and ContentResolver for the full 600+ song library.
+        appScope.launch {
+            delay(800L)
+            val scannerRepository: ScannerRepository = get()
+            scannerRepository.startObserving()
+        }
     }
+
 
     override fun newImageLoader(context: Context): ImageLoader {
         return ImageLoader.Builder(context)
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.20) // 20% RAM for artwork
+                    .maxSizePercent(context, 0.15) // 15% RAM for artwork to avoid GC thrashing
                     .build()
             }
             .diskCache {
@@ -53,10 +67,11 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
                             .absolutePath
                             .toPath()
                     )
-                    .maxSizeBytes(15L * 1024 * 1024) // 15 MB
+                    .maxSizeBytes(64L * 1024 * 1024) // 64 MB
                     .build()
             }
             .components {
+                add(coil3.network.okhttp.OkHttpNetworkFetcherFactory())
                 add(SongArtworkKeyer())
                 add(AlbumArtworkKeyer())
                 add(AlbumArtFetcher.SongFactory())

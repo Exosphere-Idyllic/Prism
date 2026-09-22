@@ -11,8 +11,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class EqualizerRepositoryImpl(
@@ -21,13 +24,12 @@ class EqualizerRepositoryImpl(
     private val dispatchers: DispatcherProvider,
 ) : EqualizerRepository {
 
+    private val saveMutex = Mutex()
     private val _equalizerConfig = MutableStateFlow(EqualizerConfig())
     override val equalizerConfig: StateFlow<EqualizerConfig> = _equalizerConfig.asStateFlow()
 
     init {
         scope.launch(dispatchers.io) {
-            val initial = preferences.equalizerConfigFlow.first()
-            _equalizerConfig.value = initial
             preferences.equalizerConfigFlow.collect { updated ->
                 _equalizerConfig.value = updated
             }
@@ -60,17 +62,26 @@ class EqualizerRepositoryImpl(
             val updatedBands = current.bands.map { existing ->
                 if (existing.id == band.id) band else existing
             }
-            current.copy(bands = updatedBands, selectedPreset = "Custom")
+            current.copy(
+                bands = updatedBands,
+                selectedPreset = if (current.mode == EqualizerMode.SIMPLE) "Custom" else null,
+            )
         }
     }
 
     override suspend fun setBands(bands: List<EqBand>) {
-        updateConfig { it.copy(bands = bands, selectedPreset = "Custom") }
+        updateConfig { current ->
+            current.copy(
+                bands = bands,
+                selectedPreset = if (current.mode == EqualizerMode.SIMPLE) "Custom" else null,
+            )
+        }
     }
 
     override suspend fun applyPreset(presetName: String) {
         val gains = EqualizerPresets.getGains(presetName) ?: return
         updateConfig { current ->
+            if (current.mode != EqualizerMode.SIMPLE) return@updateConfig current
             val updatedBands = current.bands.mapIndexed { index, band ->
                 val newGain = gains.getOrNull(index) ?: band.gainDb
                 band.copy(gainDb = newGain)
@@ -98,10 +109,11 @@ class EqualizerRepositoryImpl(
     }
 
     override suspend fun updateConfig(transform: (EqualizerConfig) -> EqualizerConfig) {
-        val newConfig = transform(_equalizerConfig.value)
-        _equalizerConfig.value = newConfig
+        val newConfig = _equalizerConfig.updateAndGet(transform)
         withContext(dispatchers.io) {
-            preferences.saveEqualizerConfig(newConfig)
+            saveMutex.withLock {
+                preferences.saveEqualizerConfig(newConfig)
+            }
         }
     }
 }

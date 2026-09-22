@@ -55,9 +55,10 @@ class ProgressTracker(
     fun syncFromController(controller: MediaController) {
         mediaController = controller
         isPlaying = controller.isPlaying
+        val dur = controller.duration
         _progressState.value = ProgressState(
             currentPosition = controller.currentPosition.coerceAtLeast(0L),
-            duration = controller.duration.coerceAtLeast(0L),
+            duration = if (dur > 0L) dur else _progressState.value.duration,
         )
         evaluateProgressPolling()
     }
@@ -68,12 +69,13 @@ class ProgressTracker(
     }
 
     fun onDurationChanged(durationMs: Long) {
-        _progressState.value = _progressState.value.copy(
-            duration = durationMs.coerceAtLeast(0L),
-        )
+        if (durationMs > 0L) {
+            _progressState.value = _progressState.value.copy(duration = durationMs)
+        }
     }
 
     fun onPositionDiscontinuity(positionMs: Long) {
+        lastSeekTimestamp = 0L
         _progressState.value = _progressState.value.copy(
             currentPosition = positionMs.coerceAtLeast(0L),
         )
@@ -102,9 +104,11 @@ class ProgressTracker(
                 mediaController?.let {
                     // Avoid jitter if user recently sought and position hasn't confirmed yet
                     if (System.currentTimeMillis() - lastSeekTimestamp > 1000L) {
+                        val pos = it.currentPosition.coerceAtLeast(0L)
+                        val dur = it.duration
                         _progressState.value = _progressState.value.copy(
-                            currentPosition = it.currentPosition.coerceAtLeast(0L),
-                            duration = it.duration.coerceAtLeast(0L),
+                            currentPosition = pos,
+                            duration = if (dur > 0L) dur else _progressState.value.duration,
                         )
                     }
                 }

@@ -35,6 +35,9 @@ import coil3.request.crossfade
 import com.example.prism.R
 import com.example.prism.ui.theme.*
 
+import com.example.prism.data.artwork.ArtworkStorage
+import kotlinx.coroutines.launch
+
 /**
  * Dialog for changing or resetting the custom artwork/cover of a song or album.
  * Supports:
@@ -50,6 +53,8 @@ fun EditArtworkDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isProcessingImage by remember { mutableStateOf(false) }
     var selectedUri by remember { mutableStateOf(currentCustomUri) }
     var urlInput by remember {
         mutableStateOf(
@@ -67,16 +72,15 @@ fun EditArtworkDialog(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: SecurityException) {
-                // Some providers do not support persistable permissions
+            isProcessingImage = true
+            scope.launch {
+                val internalUri = ArtworkStorage.copyUriToInternalStorage(context, uri)
+                if (internalUri != null) {
+                    selectedUri = internalUri
+                    urlInput = ""
+                }
+                isProcessingImage = false
             }
-            selectedUri = uri.toString()
-            urlInput = ""
         }
     }
 
@@ -115,7 +119,13 @@ fun EditArtworkDialog(
                         .background(AppSurface2),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (selectedUri.isNotEmpty()) {
+                    if (isProcessingImage) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = AppAccentSoft,
+                            strokeWidth = 3.dp
+                        )
+                    } else if (selectedUri.isNotEmpty()) {
                         AsyncImage(
                             model = ImageRequest.Builder(context)
                                 .data(selectedUri)
@@ -233,11 +243,12 @@ fun EditArtworkDialog(
                 onClick = {
                     onSave(selectedUri.trim())
                     onDismiss()
-                }
+                },
+                enabled = !isProcessingImage,
             ) {
                 Text(
                     text = stringResource(R.string.save),
-                    color = AppAccentSoft,
+                    color = if (isProcessingImage) AppTextSecondary.copy(alpha = 0.5f) else AppAccentSoft,
                     fontWeight = FontWeight.Bold
                 )
             }

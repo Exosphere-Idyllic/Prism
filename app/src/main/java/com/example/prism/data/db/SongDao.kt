@@ -5,8 +5,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import com.example.prism.data.entity.Album
-import com.example.prism.data.entity.Artist
+import androidx.room.Transaction
 import com.example.prism.data.entity.Song
 import kotlinx.coroutines.flow.Flow
 
@@ -51,7 +50,7 @@ interface SongDao {
      * Upserts songs while preserving user-set fields like [Song.customArtworkUri].
      * New songs are inserted; existing songs have only scanner-sourced columns updated.
      */
-    @androidx.room.Transaction
+    @Transaction
     suspend fun upsertPreservingUserFields(songs: List<Song>) {
         val rowIds = insertAllIgnore(songs)
         for (i in songs.indices) {
@@ -84,52 +83,4 @@ interface SongDao {
 
     @Query("UPDATE songs SET customArtworkUri = :artworkUri WHERE id = :id")
     suspend fun updateCustomArtworkUri(id: String, artworkUri: String)
-
-    @Query(
-        """
-        SELECT albumId AS id, MIN(album) AS albumName, MIN(artist) AS artist, 
-               MAX(artworkUri) AS coverPath, COUNT(*) AS songCount,
-               '' AS customCoverUri
-        FROM songs
-        GROUP BY albumId
-    """
-    )
-    suspend fun getAggregatedAlbums(): List<Album>
-
-    @Query(
-        """
-        SELECT artist AS name, COUNT(*) AS songCount, 
-               COUNT(DISTINCT albumId) AS albumCount
-        FROM songs
-        GROUP BY artist
-    """
-    )
-    suspend fun getAggregatedArtists(): List<Artist>
-
-    /**
-     * Incremental variant: re-aggregates only the albums whose IDs were touched
-     * by the last scan delta, avoiding a full-table GROUP BY on large libraries.
-     */
-    @Query(
-        """
-        SELECT albumId AS id, MIN(album) AS albumName, MIN(artist) AS artist,
-               MAX(artworkUri) AS coverPath, COUNT(*) AS songCount,
-               '' AS customCoverUri
-        FROM songs WHERE albumId IN (:albumIds) GROUP BY albumId
-    """
-    )
-    suspend fun getAggregatedAlbumsForIds(albumIds: List<Long>): List<Album>
-
-    /**
-     * Incremental variant: re-aggregates only the artists whose names were touched
-     * by the last scan delta.
-     */
-    @Query(
-        """
-        SELECT artist AS name, COUNT(*) AS songCount,
-               COUNT(DISTINCT albumId) AS albumCount
-        FROM songs WHERE artist IN (:artistNames) GROUP BY artist
-    """
-    )
-    suspend fun getAggregatedArtistsForNames(artistNames: List<String>): List<Artist>
 }

@@ -2,7 +2,6 @@ package com.example.prism.data.db
 
 import androidx.room.Dao
 import androidx.room.Query
-import androidx.room.Upsert
 import com.example.prism.data.entity.Album
 import kotlinx.coroutines.flow.Flow
 
@@ -13,15 +12,6 @@ interface AlbumDao {
 
     @Query("SELECT * FROM albums WHERE albumName LIKE :query OR artist LIKE :query ORDER BY albumName ASC")
     fun searchAlbums(query: String): Flow<List<Album>>
-
-    @Upsert
-    suspend fun insertAll(albums: List<Album>)
-
-    @Query("SELECT id, customCoverUri FROM albums WHERE customCoverUri != ''")
-    suspend fun getAllCustomCoverUris(): List<AlbumCustomCover>
-
-    @Query("SELECT id, customCoverUri FROM albums WHERE id IN (:ids) AND customCoverUri != ''")
-    suspend fun getCustomCoverUris(ids: List<Long>): List<AlbumCustomCover>
 
     @Query("UPDATE albums SET customCoverUri = :customCoverUri WHERE id = :id")
     suspend fun updateCustomCoverUri(id: Long, customCoverUri: String)

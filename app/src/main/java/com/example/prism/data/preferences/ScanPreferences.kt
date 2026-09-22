@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import timber.log.Timber
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "music_repository_prefs")
 
@@ -25,6 +26,8 @@ class ScanPreferences(private val context: Context) {
     suspend fun setLastScanTimestamp(timestamp: Long) {
         try {
             context.dataStore.edit { it[lastScanKey] = timestamp }
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            Timber.e(e, "Error saving last scan timestamp to DataStore")
+        }
     }
 }

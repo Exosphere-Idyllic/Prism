@@ -38,15 +38,12 @@ interface PlaylistDao {
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
     suspend fun deletePlaylistSong(playlistId: Long, songId: String)
 
-    @Query("SELECT COUNT(*) FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
-    suspend fun isSongInPlaylist(playlistId: Long, songId: String): Int
+    @Query("SELECT EXISTS(SELECT 1 FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId)")
+    suspend fun isSongInPlaylist(playlistId: Long, songId: String): Boolean
 
     /** Returns the song IDs in a playlist, identified by name. */
-    @Query("SELECT songId FROM playlist_songs JOIN playlists ON playlists.id = playlist_songs.playlistId WHERE playlists.name = :name")
+    @Query("SELECT songId FROM playlist_songs JOIN playlists ON playlists.id = playlist_songs.playlistId WHERE playlists.name = :name ORDER BY playlist_songs.position ASC")
     fun getPlaylistSongIdsFlow(name: String): Flow<List<String>>
-
-    @Query("DELETE FROM playlist_songs WHERE songId IN (:songIds)")
-    suspend fun deletePlaylistSongsForSongIds(songIds: List<String>)
 
     @Query(
         """
@@ -80,6 +77,8 @@ interface PlaylistDao {
     @Transaction
     suspend fun getOrCreateFavorites(now: Long): Playlist {
         insert(Playlist(name = "Favorites", createdAt = now, updatedAt = now))
-        return getPlaylistByName("Favorites")!!
+        return requireNotNull(getPlaylistByName("Favorites")) {
+            "Failed to retrieve or create Favorites playlist"
+        }
     }
 }

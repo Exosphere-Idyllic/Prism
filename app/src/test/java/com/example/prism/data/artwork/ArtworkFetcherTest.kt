@@ -32,5 +32,18 @@ class ArtworkFetcherTest {
         assertNotEquals(keyDefault, keyCustom)
         assertTrue(keyCustom.contains("_c"))
     }
+
+    @Test
+    fun albumArtworkKeyer_producesValidCacheKeyWithoutIllegalChars() {
+        val keyer = AlbumArtworkKeyer()
+        val params = AlbumArtworkParams(
+            albumId = 42L,
+            coverUri = "content://media/external/audio/albums/42",
+            customCoverUri = "https://example.com/art:work/1.jpg",
+            size = 256,
+        )
+        val key = keyer.key(params, coil3.request.Options(android.app.Application()))
+        assertTrue(key.matches(Regex("^[a-zA-Z0-9_-]+$")))
+    }
 }
 

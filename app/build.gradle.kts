@@ -119,10 +119,7 @@ dependencies {
 
   // Room
   implementation(libs.androidx.room.runtime)
-  implementation(libs.androidx.room.ktx)
   ksp(libs.androidx.room.compiler)
-  ksp(libs.kotlin.metadata)
-  ksp(libs.sqlite.jdbc)
   implementation(libs.androidx.room.paging)
 
   // Paging 3

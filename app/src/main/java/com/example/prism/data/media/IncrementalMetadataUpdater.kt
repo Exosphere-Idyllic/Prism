@@ -54,13 +54,16 @@ class IncrementalMetadataUpdater(database: AppDatabase) {
                     affectedAlbumIds.chunked(200).forEach { chunk ->
                         albumDao.syncFromSongsForIds(chunk)
                     }
-                    albumDao.deleteOrphans()
                 }
 
                 if (affectedArtistNames.isNotEmpty()) {
                     affectedArtistNames.chunked(200).forEach { chunk ->
                         artistDao.syncFromSongsForNames(chunk)
                     }
+                }
+
+                if (songsToDelete.isNotEmpty() || oldSongs.isNotEmpty()) {
+                    albumDao.deleteOrphans()
                     artistDao.deleteOrphans()
                 }
             }
