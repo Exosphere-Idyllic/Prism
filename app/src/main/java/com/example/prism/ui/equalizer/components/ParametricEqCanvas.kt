@@ -66,7 +66,8 @@ fun normalizedXToFreq(normX: Float): Float {
 }
 
 /**
- * Converts dB gain to normalized Y (0f..1f) where 0f is top (+15 dB) and 1f is bottom (-15 dB).
+ * Convierte ganancia en dB a una coordenada normalizada Y (0f..1f),
+ * donde 0f representa el tope superior (+15 dB) y 1f la base inferior (-15 dB).
  */
 fun dbToNormalizedY(gainDb: Float): Float {
     val clamped = gainDb.coerceIn(MIN_DB, MAX_DB)
@@ -74,13 +75,25 @@ fun dbToNormalizedY(gainDb: Float): Float {
 }
 
 /**
- * Converts normalized Y (0f..1f) to dB gain.
+ * Convierte una coordenada normalizada Y (0f..1f) a ganancia en dB (-15 dB a +15 dB).
  */
 fun normalizedYToDb(normY: Float): Float {
     val clamped = normY.coerceIn(0f, 1f)
     return (MAX_DB - clamped * (MAX_DB - MIN_DB)).coerceIn(MIN_DB, MAX_DB)
 }
 
+/**
+ * Lienzo gráfico interactivo con tecnología Compose Canvas que visualiza la curva de respuesta
+ * en frecuencia acumulada (|H(f)| en dB) y provee nodos interactivos manipulables con gestos táctiles.
+ *
+ * @param bands Lista de bandas paramétricas del ecualizador.
+ * @param preampDb Ganancia de preamplificación en dB que desplaza verticalmente la curva base.
+ * @param selectedBandId ID de la banda actualmente seleccionada para resaltar su nodo e iluminar su aureola.
+ * @param enabled Si el ecualizador está activo (si es false, los gestos táctiles se deshabilitan y la curva se dibuja plana).
+ * @param onSelectBand Callback invocado al pulsar sobre un nodo de banda en el Canvas.
+ * @param onBandNodeDrag Callback invocado durante el arrastre continuo de un nodo con las nuevas coordenadas en Hz y dB.
+ * @param modifier Modificador de diseño Compose.
+ */
 @Composable
 fun ParametricEqCanvas(
     bands: List<EqBand>,

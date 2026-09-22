@@ -162,10 +162,10 @@ data class BiquadCoefficients(
 
         val numMagSq = numRe * numRe + numIm * numIm
         val denMagSq = denRe * denRe + denIm * denIm
+        if (denMagSq <= 1e-12) return 0f
 
-        if (denMagSq <= 1e-12 || numMagSq <= 1e-12) return 0f
-
-        val magSq = numMagSq / denMagSq
+        val safeNumMagSq = maxOf(numMagSq, 1e-12)
+        val magSq = safeNumMagSq / denMagSq
         return (10.0 * log10(magSq)).toFloat()
     }
 }

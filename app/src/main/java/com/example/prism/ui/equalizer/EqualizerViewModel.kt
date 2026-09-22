@@ -21,6 +21,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * ViewModel para gestionar el estado de la pantalla de ecualización ([EqualizerScreen]).
+ *
+ * Mantiene la reactividad frente a cambios en [EqualizerRepository] e implementa
+ * un mecanismo de debouncing de 100 ms para sincronizar modificaciones intensivas
+ * de sliders o gestos en Canvas hacia el [EqualizerController] sin sobrecargar el hilo de audio IPC.
+ */
 class EqualizerViewModel(
     private val repository: EqualizerRepository,
     private val controller: EqualizerController,
@@ -50,6 +57,7 @@ class EqualizerViewModel(
         }
     }
 
+    /** Alterna el estado activo/inactivo del ecualizador globalmente. */
     fun toggleEnabled() {
         val newEnabled = !_uiState.value.enabled
         _uiState.update { it.copy(enabled = newEnabled) }
@@ -58,6 +66,7 @@ class EqualizerViewModel(
         }
     }
 
+    /** Cambia el modo de operación entre SIMPLE y ADVANCED. */
     fun setMode(mode: EqualizerMode) {
         if (_uiState.value.mode == mode) return
         _uiState.update { it.copy(mode = mode, selectedBandId = null) }
@@ -66,16 +75,19 @@ class EqualizerViewModel(
         }
     }
 
+    /** Selecciona una banda para inspección y edición detallada en modo avanzado. */
     fun selectBand(bandId: Int) {
         _uiState.update { it.copy(selectedBandId = bandId) }
     }
 
+    /** Ajusta el nivel de preamplificación en dB (con debouncing de 100 ms). */
     fun setPreamp(preampDb: Float) {
         val clamped = preampDb.coerceIn(-12f, 12f)
         _uiState.update { it.copy(preampDb = clamped) }
         scheduleDebouncedSync()
     }
 
+    /** Ajusta la ganancia de una banda en dB (con debouncing de 100 ms). */
     fun setBandGain(bandId: Int, gainDb: Float) {
         val clamped = gainDb.coerceIn(-12f, 12f)
         _uiState.update { current ->
@@ -90,6 +102,7 @@ class EqualizerViewModel(
         scheduleDebouncedSync()
     }
 
+    /** Ajusta la frecuencia central o de corte de una banda (con debouncing de 100 ms). */
     fun setBandFrequency(bandId: Int, freqHz: Float) {
         val clamped = freqHz.coerceIn(20f, 20_000f)
         _uiState.update { current ->
@@ -101,6 +114,7 @@ class EqualizerViewModel(
         scheduleDebouncedSync()
     }
 
+    /** Ajusta el factor de calidad Q de una banda (con debouncing de 100 ms). */
     fun setBandQ(bandId: Int, q: Float) {
         val clamped = q.coerceIn(0.1f, 10f)
         _uiState.update { current ->
@@ -112,6 +126,7 @@ class EqualizerViewModel(
         scheduleDebouncedSync()
     }
 
+    /** Cambia la topología de filtro biquad de una banda (con debouncing de 100 ms). */
     fun setBandFilterType(bandId: Int, type: com.example.prism.domain.model.equalizer.EqFilterType) {
         _uiState.update { current ->
             val updatedBands = current.bands.map { band ->
@@ -122,6 +137,7 @@ class EqualizerViewModel(
         scheduleDebouncedSync()
     }
 
+    /** Actualiza frecuencia y ganancia simultáneamente (utilizado por el arrastre en Canvas). */
     fun updateBandParametric(bandId: Int, freqHz: Float, gainDb: Float) {
         val clampedFreq = freqHz.coerceIn(20f, 20_000f)
         val clampedGain = gainDb.coerceIn(-12f, 12f)
@@ -134,6 +150,7 @@ class EqualizerViewModel(
         scheduleDebouncedSync()
     }
 
+    /** Aplica un perfil predefinido de ecualización. */
     fun selectPreset(presetName: String) {
         val gains = EqualizerPresets.getGains(presetName) ?: return
         _uiState.update { current ->
@@ -150,6 +167,7 @@ class EqualizerViewModel(
         }
     }
 
+    /** Alterna el limitador suave contra clipping. */
     fun toggleLimiter() {
         val newLimiter = !_uiState.value.limiterEnabled
         _uiState.update { it.copy(limiterEnabled = newLimiter) }
@@ -158,6 +176,7 @@ class EqualizerViewModel(
         }
     }
 
+    /** Restablece todas las bandas y el preamp a los valores por defecto. */
     fun reset() {
         viewModelScope.launch(dispatchers.io) {
             controller.reset()

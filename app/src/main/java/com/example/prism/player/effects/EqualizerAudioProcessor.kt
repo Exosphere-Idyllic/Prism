@@ -55,6 +55,9 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         }
     }
 
+    /**
+     * Obtiene una copia inmutable de la configuración actual del procesador.
+     */
     fun getConfig(): EqualizerConfig = configRef.get()
 
     private fun updateFromConfig(config: EqualizerConfig) {
