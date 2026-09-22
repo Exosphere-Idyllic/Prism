@@ -77,4 +77,13 @@
     <string name="eq_limiter">Limiter</string>
     <string name="eq_mode_simple">Simple</string>
     <string name="eq_mode_advanced">Advanced</string>
+    <string name="eq_filter_bell">Bell (Peaking)</string>
+    <string name="eq_filter_low_shelf">Low Shelf</string>
+    <string name="eq_filter_high_shelf">High Shelf</string>
+    <string name="eq_filter_low_pass">Low Pass</string>
+    <string name="eq_filter_high_pass">High Pass</string>
+    <string name="eq_filter_notch">Notch</string>
+    <string name="eq_freq_label">Frequency</string>
+    <string name="eq_gain_label">Gain</string>
+    <string name="eq_q_label">Q Factor</string>
 </resources>

@@ -43,6 +43,7 @@ class EqualizerViewModel(
                         selectedPreset = config.selectedPreset,
                         bands = config.bands,
                         limiterEnabled = config.limiterEnabled,
+                        selectedBandId = current.selectedBandId ?: config.bands.firstOrNull()?.id,
                     )
                 }
             }
@@ -59,10 +60,14 @@ class EqualizerViewModel(
 
     fun setMode(mode: EqualizerMode) {
         if (_uiState.value.mode == mode) return
-        _uiState.update { it.copy(mode = mode) }
+        _uiState.update { it.copy(mode = mode, selectedBandId = null) }
         viewModelScope.launch(dispatchers.io) {
             controller.setMode(mode)
         }
+    }
+
+    fun selectBand(bandId: Int) {
+        _uiState.update { it.copy(selectedBandId = bandId) }
     }
 
     fun setPreamp(preampDb: Float) {
@@ -81,6 +86,50 @@ class EqualizerViewModel(
                 bands = updatedBands,
                 selectedPreset = null // Manual adjustment clears the active preset name
             )
+        }
+        scheduleDebouncedSync()
+    }
+
+    fun setBandFrequency(bandId: Int, freqHz: Float) {
+        val clamped = freqHz.coerceIn(20f, 20_000f)
+        _uiState.update { current ->
+            val updatedBands = current.bands.map { band ->
+                if (band.id == bandId) band.copy(frequencyHz = clamped) else band
+            }
+            current.copy(bands = updatedBands, selectedPreset = null)
+        }
+        scheduleDebouncedSync()
+    }
+
+    fun setBandQ(bandId: Int, q: Float) {
+        val clamped = q.coerceIn(0.1f, 10f)
+        _uiState.update { current ->
+            val updatedBands = current.bands.map { band ->
+                if (band.id == bandId) band.copy(q = clamped) else band
+            }
+            current.copy(bands = updatedBands, selectedPreset = null)
+        }
+        scheduleDebouncedSync()
+    }
+
+    fun setBandFilterType(bandId: Int, type: com.example.prism.domain.model.equalizer.EqFilterType) {
+        _uiState.update { current ->
+            val updatedBands = current.bands.map { band ->
+                if (band.id == bandId) band.copy(type = type) else band
+            }
+            current.copy(bands = updatedBands, selectedPreset = null)
+        }
+        scheduleDebouncedSync()
+    }
+
+    fun updateBandParametric(bandId: Int, freqHz: Float, gainDb: Float) {
+        val clampedFreq = freqHz.coerceIn(20f, 20_000f)
+        val clampedGain = gainDb.coerceIn(-12f, 12f)
+        _uiState.update { current ->
+            val updatedBands = current.bands.map { band ->
+                if (band.id == bandId) band.copy(frequencyHz = clampedFreq, gainDb = clampedGain) else band
+            }
+            current.copy(bands = updatedBands, selectedPreset = null)
         }
         scheduleDebouncedSync()
     }

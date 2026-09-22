@@ -152,4 +152,62 @@ class EqualizerViewModelTest {
         advanceUntilIdle()
         coVerify(exactly = 1) { mockController.reset() }
     }
+
+    @Test
+    fun selectBand_updatesSelectedBandId() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.selectBand(3)
+        assertEquals(3, viewModel.uiState.value.selectedBandId)
+    }
+
+    @Test
+    fun setBandFrequency_updatesFrequencyAndDebouncesSync() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.setBandFrequency(1, 800f)
+        assertEquals(800f, viewModel.uiState.value.bands[1].frequencyHz)
+
+        advanceTimeBy(110)
+        coVerify(exactly = 1) { mockController.setBands(match { it[1].frequencyHz == 800f }) }
+    }
+
+    @Test
+    fun setBandQ_updatesQAndDebouncesSync() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.setBandQ(2, 2.5f)
+        assertEquals(2.5f, viewModel.uiState.value.bands[2].q)
+
+        advanceTimeBy(110)
+        coVerify(exactly = 1) { mockController.setBands(match { it[2].q == 2.5f }) }
+    }
+
+    @Test
+    fun setBandFilterType_updatesFilterTypeAndDebouncesSync() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.setBandFilterType(0, com.example.prism.domain.model.equalizer.EqFilterType.LOW_PASS)
+        assertEquals(com.example.prism.domain.model.equalizer.EqFilterType.LOW_PASS, viewModel.uiState.value.bands[0].type)
+
+        advanceTimeBy(110)
+        coVerify(exactly = 1) { mockController.setBands(match { it[0].type == com.example.prism.domain.model.equalizer.EqFilterType.LOW_PASS }) }
+    }
+
+    @Test
+    fun updateBandParametric_updatesFrequencyAndGainTogether() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        viewModel.updateBandParametric(4, 2500f, 6.0f)
+        val band = viewModel.uiState.value.bands[4]
+        assertEquals(2500f, band.frequencyHz)
+        assertEquals(6.0f, band.gainDb)
+
+        advanceTimeBy(110)
+        coVerify(exactly = 1) {
+            mockController.setBands(match {
+                it[4].frequencyHz == 2500f && it[4].gainDb == 6.0f
+            })
+        }
+    }
 }

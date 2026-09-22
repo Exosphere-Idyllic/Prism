@@ -13,4 +13,5 @@ data class EqualizerUiState(
     val availablePresets: List<String> = EqualizerPresets.presetNames,
     val bands: List<EqBand> = EqualizerConfig.defaultBands(),
     val limiterEnabled: Boolean = true,
+    val selectedBandId: Int? = null,
 )
