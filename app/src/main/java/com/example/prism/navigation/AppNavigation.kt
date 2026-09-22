@@ -16,6 +16,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.example.prism.ui.album.AlbumDetailScreen
 import com.example.prism.ui.artist.ArtistDetailScreen
+import com.example.prism.ui.equalizer.EqualizerScreen
 import com.example.prism.ui.library.LibraryViewModel
 import com.example.prism.ui.library.SongListScreen
 import com.example.prism.ui.player.PlaybackViewModel
@@ -78,6 +79,13 @@ fun MainNavigation() {
             entry<Player> {
                 PlayerScreen(
                     viewModel = playbackViewModel,
+                    onBack = { backStack.removeLastOrNull() },
+                    onNavigateToEqualizer = { backStack.add(Equalizer) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            entry<Equalizer> {
+                EqualizerScreen(
                     onBack = { backStack.removeLastOrNull() },
                     modifier = Modifier.fillMaxSize()
                 )

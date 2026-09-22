@@ -14,15 +14,17 @@ import com.example.prism.data.entity.Song
  *
  * Artwork URI resolution order:
  *  1. [Song.customArtworkUri] (user-selected custom art — highest priority)
- *  2. [Song.artworkUri] (MediaStore-resolved album art URI)
- *  3. MediaStore Albums provider URI via [MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI]
- *  4. null (fallback to placeholder in UI)
+ *  2. [Song.artworkUri] (album artwork URI if already populated)
+ *  3. MediaStore album art URI by [Song.albumId]
+ *  4. [Song.mediaUri] (direct song URI in MediaStore.Audio.Media)
+ *  5. null (fallback to default in UI)
  */
 fun Song.toMediaItem(): MediaItem {
     val parsedArtworkUri: Uri? = when {
         customArtworkUri.isNotEmpty() -> customArtworkUri.toUri()
         artworkUri.isNotEmpty() -> artworkUri.toUri()
-        albumId > 0 -> ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
+        albumId > 0L -> ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
+        mediaUri.isNotEmpty() -> mediaUri.toUri()
         else -> null
     }
 

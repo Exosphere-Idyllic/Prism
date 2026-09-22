@@ -66,4 +66,15 @@
     <string name="save">Save</string>
     <string name="preview">Preview</string>
     <string name="cd_edit_artwork">Edit artwork</string>
+
+    <!-- Equalizer UI -->
+    <string name="equalizer_title">Equalizer</string>
+    <string name="cd_equalizer">Equalizer</string>
+    <string name="eq_enable">Enable Equalizer</string>
+    <string name="eq_preamp">Preamp</string>
+    <string name="eq_preset">Preset</string>
+    <string name="eq_reset">Reset</string>
+    <string name="eq_limiter">Limiter</string>
+    <string name="eq_mode_simple">Simple</string>
+    <string name="eq_mode_advanced">Advanced</string>
 </resources>

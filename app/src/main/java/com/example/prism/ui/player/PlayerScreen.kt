@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lyrics
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -76,6 +77,7 @@ fun PlayerScreen(
     viewModel: PlaybackViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToEqualizer: () -> Unit = {},
     lyricsViewModel: LyricsViewModel = koinViewModel(),
     libraryViewModel: LibraryViewModel = koinViewModel(),
 ) {
@@ -95,6 +97,7 @@ fun PlayerScreen(
         songLyrics = songLyrics,
         onSelectLyricsSource = { lyricsViewModel.selectSource(it) },
         onBack = onBack,
+        onNavigateToEqualizer = onNavigateToEqualizer,
         onPlayPauseToggle = { viewModel.togglePlayPause() },
         onNext = { viewModel.next() },
         onPrevious = { viewModel.previous() },
@@ -129,6 +132,7 @@ fun PlayerContent(
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
     onEditArtwork: () -> Unit = {},
+    onNavigateToEqualizer: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val currentOnBack by rememberUpdatedState(onBack)
@@ -212,22 +216,43 @@ fun PlayerContent(
                     letterSpacing = 1.5.sp,
                 )
 
-                // Toggle between Artwork and Lyrics
-                IconButton(
-                    onClick = { showLyrics = !showLyrics },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (showLyrics) AppAccentSoft.copy(alpha = 0.2f) else AppSurface2),
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = if (showLyrics) Icons.Default.Album else Icons.Default.Lyrics,
-                        contentDescription = stringResource(
-                            if (showLyrics) R.string.cd_artwork else R.string.cd_lyrics,
-                        ),
-                        tint = if (showLyrics) AppAccentSoft else AppTextPrimary,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    // Equalizer Navigation Button
+                    IconButton(
+                        onClick = onNavigateToEqualizer,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AppSurface2),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = stringResource(R.string.cd_equalizer),
+                            tint = AppTextPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+
+                    // Toggle between Artwork and Lyrics
+                    IconButton(
+                        onClick = { showLyrics = !showLyrics },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (showLyrics) AppAccentSoft.copy(alpha = 0.2f) else AppSurface2),
+                    ) {
+                        Icon(
+                            imageVector = if (showLyrics) Icons.Default.Album else Icons.Default.Lyrics,
+                            contentDescription = stringResource(
+                                if (showLyrics) R.string.cd_artwork else R.string.cd_lyrics,
+                            ),
+                            tint = if (showLyrics) AppAccentSoft else AppTextPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
 

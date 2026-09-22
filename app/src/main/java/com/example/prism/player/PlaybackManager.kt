@@ -12,6 +12,7 @@ import androidx.media3.session.SessionToken
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.entity.Song
 import com.example.prism.domain.repository.LibraryRepository
+import com.example.prism.player.toMediaItems
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -210,7 +211,7 @@ class PlaybackManagerImpl(
         val resolvedDuration = when {
             controller.duration > 0L -> controller.duration
             (song?.duration ?: 0L) > 0L -> song!!.duration
-            else -> progressState.value.duration
+            else -> 0L
         }
         progressTracker.onDurationChanged(resolvedDuration)
     }
@@ -288,7 +289,7 @@ class PlaybackManagerImpl(
             val command = SessionCommand(action, android.os.Bundle.EMPTY)
             controller.sendCustomCommand(command, args)
         } else {
-            Timber.d("MediaController not connected yet; custom command %s delayed", action)
+            Timber.w("MediaController not connected yet; custom command %s was dropped", action)
         }
     }
 
