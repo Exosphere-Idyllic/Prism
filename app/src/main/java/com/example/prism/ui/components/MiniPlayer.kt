@@ -44,13 +44,11 @@ fun MiniPlayer(
     onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val progressState = progressStateFlow.collectAsStateWithLifecycle()
-
     MiniPlayer(
         song = song,
         isPlaying = isPlaying,
         progressFraction = {
-            val current = progressState.value
+            val current = progressStateFlow.value
             if (current.duration > 0L) {
                 (current.currentPosition.toFloat() / current.duration.toFloat()).coerceIn(0f, 1f)
             } else 0f

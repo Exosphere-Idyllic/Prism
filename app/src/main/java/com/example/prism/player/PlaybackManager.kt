@@ -50,6 +50,8 @@ class PlaybackManagerImpl(
          * Enforces safety against [android.os.TransactionTooLargeException] (1 MB Binder cap).
          */
         private const val MAX_QUEUE_SIZE = 1000
+        private const val INITIAL_WINDOW = 51
+        private const val EXPAND_THRESHOLD = 35
     }
 
     private val _currentSong = MutableStateFlow<Song?>(null)
@@ -63,6 +65,12 @@ class PlaybackManagerImpl(
 
     @Volatile
     private var activePlaylist: List<Song> = emptyList()
+
+    @Volatile
+    private var fullPlaylist: List<Song> = emptyList()
+
+    @Volatile
+    private var fullPlaylistWindowStart: Int = 0
 
     private val pendingPlay = AtomicReference<Pair<Song, List<Song>>?>(null)
 
@@ -166,6 +174,12 @@ class PlaybackManagerImpl(
                         }
                     }
                 }
+
+                // Incremental queue expansion when user advances near the end of active window
+                val currentIndex = controller.currentMediaItemIndex
+                if (currentIndex >= EXPAND_THRESHOLD && (fullPlaylistWindowStart + activePlaylist.size) < fullPlaylist.size) {
+                    expandQueueIfNeeded(controller)
+                }
             }
 
             override fun onPositionDiscontinuity(
@@ -231,19 +245,18 @@ class PlaybackManagerImpl(
                 if (base.none { it.id == song.id }) listOf(song) + base else base
             }
 
-            // Windowing to prevent TransactionTooLargeException:
-            // Center a window of at most MAX_QUEUE_SIZE items around the selected song.
+            // Windowing to avoid IPC bottlenecks & huge memory spikes:
+            // Center a small initial window (INITIAL_WINDOW) around the selected song.
             val rawIndex = allSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-            val windowedSongs = if (allSongs.size > MAX_QUEUE_SIZE) {
-                val halfWindow = MAX_QUEUE_SIZE / 2
-                val start = (rawIndex - halfWindow).coerceAtLeast(0)
-                val end = (start + MAX_QUEUE_SIZE).coerceAtMost(allSongs.size)
-                val adjustedStart = (end - MAX_QUEUE_SIZE).coerceAtLeast(0)
-                allSongs.subList(adjustedStart, end)
-            } else {
-                allSongs
-            }
+            val windowSize = INITIAL_WINDOW.coerceAtMost(allSongs.size)
+            val halfWindow = windowSize / 2
+            val windowStart = (rawIndex - halfWindow).coerceIn(0, (allSongs.size - windowSize).coerceAtLeast(0))
+            val windowEnd = (windowStart + windowSize).coerceAtMost(allSongs.size)
+
+            val windowedSongs = allSongs.subList(windowStart, windowEnd)
             activePlaylist = windowedSongs
+            fullPlaylist = allSongs
+            fullPlaylistWindowStart = windowStart
 
             val startIndex = windowedSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
 
@@ -258,6 +271,27 @@ class PlaybackManagerImpl(
                 controller.play()
             } catch (e: Exception) {
                 Timber.e(e, "setMediaItems failed in playSong")
+            }
+        }
+    }
+
+    private fun expandQueueIfNeeded(controller: MediaController) {
+        val currentEnd = fullPlaylistWindowStart + activePlaylist.size
+        val newEnd = (currentEnd + INITIAL_WINDOW).coerceAtMost(fullPlaylist.size)
+        if (newEnd <= currentEnd) return
+
+        scope.launch(dispatchers.default) {
+            val songsToAdd = fullPlaylist.subList(currentEnd, newEnd)
+            val newItems = songsToAdd.toMediaItems()
+
+            withContext(dispatchers.main) {
+                try {
+                    controller.addMediaItems(newItems)
+                    activePlaylist = fullPlaylist.subList(fullPlaylistWindowStart, newEnd)
+                    Timber.d("Expanded queue by %d items (total in active window: %d)", newItems.size, activePlaylist.size)
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to expand queue in PlaybackManager")
+                }
             }
         }
     }
