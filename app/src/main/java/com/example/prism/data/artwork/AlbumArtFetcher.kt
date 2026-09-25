@@ -23,6 +23,8 @@ import java.util.LinkedHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -104,6 +106,12 @@ class AlbumArtFetcher(
         }
 
         /**
+         * Limits concurrent [MediaMetadataRetriever] instances to prevent native memory exhaustion
+         * and binder thread saturation during fast fling scrolling.
+         */
+        private val retrieverSemaphore = Semaphore(3)
+
+        /**
          * Decodes and downsamples a [ByteArray] to the requested resolution using RGB_565
          * to cut heap memory allocation in half and avoid GC pauses during fast scrolling.
          */
@@ -116,14 +124,7 @@ class AlbumArtFetcher(
             }
             BitmapFactory.decodeByteArray(data, 0, data.size, boundsOptions)
 
-            var inSampleSize = 1
-            val height = boundsOptions.outHeight
-            val width = boundsOptions.outWidth
-            if (height > reqSize || width > reqSize) {
-                while ((height / (inSampleSize * 2)) >= reqSize && (width / (inSampleSize * 2)) >= reqSize) {
-                    inSampleSize *= 2
-                }
-            }
+            val inSampleSize = calculateInSampleSize(boundsOptions.outWidth, boundsOptions.outHeight, reqSize)
 
             val decodeOptions = BitmapFactory.Options().apply {
                 this.inSampleSize = inSampleSize
@@ -134,6 +135,63 @@ class AlbumArtFetcher(
             } catch (_: OutOfMemoryError) {
                 null
             }
+        }
+
+        fun decodeSampledBitmapFromFile(file: File, targetSize: Int): Bitmap? {
+            if (!file.exists()) return null
+            val reqSize = if (targetSize > 0) targetSize.coerceIn(64, 1024) else MASTER_ARTWORK_SIZE
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+
+            val inSampleSize = calculateInSampleSize(boundsOptions.outWidth, boundsOptions.outHeight, reqSize)
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            return try {
+                BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+            } catch (_: OutOfMemoryError) {
+                null
+            }
+        }
+
+        fun decodeSampledBitmapFromStream(openStream: () -> java.io.InputStream?, targetSize: Int): Bitmap? {
+            val reqSize = if (targetSize > 0) targetSize.coerceIn(64, 1024) else MASTER_ARTWORK_SIZE
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            openStream()?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOptions)
+            } ?: return null
+
+            val inSampleSize = calculateInSampleSize(boundsOptions.outWidth, boundsOptions.outHeight, reqSize)
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            return try {
+                openStream()?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOptions)
+                }
+            } catch (_: OutOfMemoryError) {
+                null
+            }
+        }
+
+        private fun calculateInSampleSize(width: Int, height: Int, reqSize: Int): Int {
+            var inSampleSize = 1
+            if (height > reqSize || width > reqSize) {
+                while ((height / (inSampleSize * 2)) >= reqSize && (width / (inSampleSize * 2)) >= reqSize) {
+                    inSampleSize *= 2
+                }
+            }
+            return inSampleSize
         }
     }
 
@@ -164,7 +222,7 @@ class AlbumArtFetcher(
 
     // ── Song artwork ─────────────────────────────────────────────────────────
 
-    private fun fetchSongArtwork(signal: CancellationSignal): FetchResult? {
+    private suspend fun fetchSongArtwork(signal: CancellationSignal): FetchResult? {
         // Strategy 1: Custom user-selected artwork URI (highest priority)
         if (customArtworkUri.isNotEmpty()) {
             fetchFromCustomUri(customArtworkUri)?.let { return it }
@@ -190,7 +248,7 @@ class AlbumArtFetcher(
 
     // ── Album artwork ────────────────────────────────────────────────────────
 
-    private fun fetchAlbumArtwork(signal: CancellationSignal): FetchResult? {
+    private suspend fun fetchAlbumArtwork(signal: CancellationSignal): FetchResult? {
         // Strategy 1: Custom user-selected cover URI
         if (customArtworkUri.isNotEmpty()) {
             fetchFromCustomUri(customArtworkUri)?.let { return it }
@@ -209,7 +267,7 @@ class AlbumArtFetcher(
         return null
     }
 
-    private fun fetchAlbumSongArtwork(albumId: Long, signal: CancellationSignal): FetchResult? {
+    private suspend fun fetchAlbumSongArtwork(albumId: Long, signal: CancellationSignal): FetchResult? {
         val songUri = querySongUriForAlbum(albumId) ?: return null
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -261,16 +319,13 @@ class AlbumArtFetcher(
                 scheme == "file" || scheme.isNullOrEmpty() -> {
                     val path = parsedUri.path ?: uri
                     val file = File(path)
-                    if (file.exists()) {
-                        val bytes = file.readBytes()
-                        decodeSampledBitmap(bytes, requestedSize)?.let { bitmapToResult(it) }
-                    } else null
+                    decodeSampledBitmapFromFile(file, requestedSize)?.let { bitmapToResult(it) }
                 }
                 else -> {
-                    context.contentResolver.openInputStream(parsedUri)?.use { stream ->
-                        val bytes = stream.readBytes()
-                        decodeSampledBitmap(bytes, requestedSize)?.let { bitmapToResult(it) }
-                    }
+                    decodeSampledBitmapFromStream(
+                        openStream = { context.contentResolver.openInputStream(parsedUri) },
+                        targetSize = requestedSize,
+                    )?.let { bitmapToResult(it) }
                 }
             }
         } catch (_: Exception) {
@@ -293,21 +348,23 @@ class AlbumArtFetcher(
         }
     }
 
-    private fun extractEmbeddedArtwork(uri: String): FetchResult? {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            val parsedUri = uri.toUri()
-            if (parsedUri.scheme.isNullOrEmpty()) {
-                retriever.setDataSource(uri)
-            } else {
-                retriever.setDataSource(context, parsedUri)
+    private suspend fun extractEmbeddedArtwork(uri: String): FetchResult? {
+        return retrieverSemaphore.withPermit {
+            val retriever = MediaMetadataRetriever()
+            try {
+                val parsedUri = uri.toUri()
+                if (parsedUri.scheme.isNullOrEmpty()) {
+                    retriever.setDataSource(uri)
+                } else {
+                    retriever.setDataSource(context, parsedUri)
+                }
+                val picture = retriever.embeddedPicture ?: return@withPermit null
+                decodeSampledBitmap(picture, requestedSize)?.let { bitmapToResult(it) }
+            } catch (_: Exception) {
+                null
+            } finally {
+                try { retriever.release() } catch (_: Exception) { }
             }
-            val picture = retriever.embeddedPicture ?: return null
-            decodeSampledBitmap(picture, requestedSize)?.let { bitmapToResult(it) }
-        } catch (_: Exception) {
-            null
-        } finally {
-            try { retriever.release() } catch (_: Exception) { }
         }
     }
 
