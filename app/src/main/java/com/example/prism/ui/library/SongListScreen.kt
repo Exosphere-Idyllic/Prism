@@ -82,16 +82,12 @@ fun SongListScreen(
     val totalSongs by libraryViewModel.totalSongsCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // ── Hoist all tab data above the `when` block so state is preserved ────────
-    // Collecting flows *inside* `when(selectedTab)` was the main cause of tab-switch
-    // jank: every switch cancelled and re-subscribed the Room/Paging queries, causing
-    // a loading flash and a fresh full recomposition.  Collecting here keeps all data
-    // in memory regardless of which tab is visible.
+    // ── Primary tab data and states ──────────────────────────────────────────
+    // songsFlow and favoriteSongIds remain hoisted because they are used directly by the main
+    // Biblioteca tab and shared favorites state. Secondary tabs collect their flows on-demand
+    // inside their respective branches, backed by WhileSubscribed(30_000) in the ViewModel.
     val lazySongs = libraryViewModel.songsFlow.collectAsLazyPagingItems()
     val favoriteSongIds by libraryViewModel.favoriteSongIds.collectAsStateWithLifecycle(persistentSetOf())
-    val albums by libraryViewModel.albumsFlow.collectAsStateWithLifecycle(persistentListOf())
-    val artists by libraryViewModel.artistsFlow.collectAsStateWithLifecycle(persistentListOf())
-    val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(persistentListOf())
 
     // ── Hoist list states above `when` to preserve scroll position on tab switches ─
     val songsListState = rememberLazyListState()
@@ -260,25 +256,34 @@ fun SongListScreen(
                             onEditArtwork = onEditArtwork,
                             listState = songsListState,
                         )
-                        LibraryTab.Albumes -> AlbumsTabContent(
-                            albums = albums,
-                            isLoading = isLoading,
-                            gridState = albumsGridState,
-                            onNavigateToAlbum = onNavigateToAlbum,
-                        )
-                        LibraryTab.Playlists -> PlaylistsTabContent(
-                            playlists = playlists,
-                            listState = playlistsListState,
-                            onCreatePlaylistClick = { showCreateDialog = true },
-                            onNavigateToPlaylist = onNavigateToPlaylist,
-                            onDeletePlaylist = { libraryViewModel.deletePlaylist(it) },
-                        )
-                        LibraryTab.Artistas -> ArtistsTabContent(
-                            artists = artists,
-                            isLoading = isLoading,
-                            listState = artistsListState,
-                            onNavigateToArtist = onNavigateToArtist,
-                        )
+                        LibraryTab.Albumes -> {
+                            val albums by libraryViewModel.albumsFlow.collectAsStateWithLifecycle(persistentListOf())
+                            AlbumsTabContent(
+                                albums = albums,
+                                isLoading = isLoading,
+                                gridState = albumsGridState,
+                                onNavigateToAlbum = onNavigateToAlbum,
+                            )
+                        }
+                        LibraryTab.Playlists -> {
+                            val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(persistentListOf())
+                            PlaylistsTabContent(
+                                playlists = playlists,
+                                listState = playlistsListState,
+                                onCreatePlaylistClick = { showCreateDialog = true },
+                                onNavigateToPlaylist = onNavigateToPlaylist,
+                                onDeletePlaylist = { libraryViewModel.deletePlaylist(it) },
+                            )
+                        }
+                        LibraryTab.Artistas -> {
+                            val artists by libraryViewModel.artistsFlow.collectAsStateWithLifecycle(persistentListOf())
+                            ArtistsTabContent(
+                                artists = artists,
+                                isLoading = isLoading,
+                                listState = artistsListState,
+                                onNavigateToArtist = onNavigateToArtist,
+                            )
+                        }
                     }
                 }
             }
@@ -307,6 +312,7 @@ fun SongListScreen(
             )
         }
         songToAddToPlaylist?.let { song ->
+            val playlists by libraryViewModel.playlistsWithCountsFlow.collectAsStateWithLifecycle(persistentListOf())
             AddToPlaylistDialog(
                 song = song,
                 playlists = playlists,

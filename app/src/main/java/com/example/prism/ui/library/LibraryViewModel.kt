@@ -57,9 +57,9 @@ class LibraryViewModel(
         }
         .cachedIn(viewModelScope)
 
-    // SharingStarted.Lazily keeps the query alive as long as the ViewModel lives,
-    // even when there are no active subscribers (e.g. while switching tabs).
-    // This means switching back to Albums/Artists never triggers a fresh Room query.
+    // SharingStarted.WhileSubscribed(30_000) keeps the query alive for 30s after the tab
+    // is unselected. This guarantees that switching between tabs within 30 seconds never triggers
+    // a fresh Room query or loading flash, while releasing Room observer resources when not in use.
     @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val albumsFlow = _searchQuery
         .debounce(::searchDebounce)
@@ -68,7 +68,7 @@ class LibraryViewModel(
         }
         .map { it.toImmutableList() }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30_000), persistentListOf())
 
     @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val artistsFlow = _searchQuery
@@ -78,11 +78,11 @@ class LibraryViewModel(
         }
         .map { it.toImmutableList() }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Lazily, persistentListOf())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30_000), persistentListOf())
 
     val playlistsWithCountsFlow = playlistRepository.playlistsWithCountsFlow
         .map { it.toImmutableList() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), persistentListOf())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30_000), persistentListOf())
 
     val favoriteSongIds: StateFlow<ImmutableSet<String>> = playlistRepository.getFavoriteSongIds()
         .map { it.toImmutableSet() }
