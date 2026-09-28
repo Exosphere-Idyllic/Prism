@@ -37,9 +37,11 @@ class LibraryRepositoryImpl(
     override fun getSongsFlow(query: String): Flow<PagingData<Song>> {
         return Pager(
             config = PagingConfig(
-                pageSize = 30,
+                pageSize = 40,
+                prefetchDistance = 20,
+                initialLoadSize = 40,
+                maxSize = 200,
                 enablePlaceholders = false,
-                prefetchDistance = 40,
             ),
         ) {
             if (query.isEmpty()) songDao.getAllSongsPaging() else songDao.searchSongsPaging("%$query%")

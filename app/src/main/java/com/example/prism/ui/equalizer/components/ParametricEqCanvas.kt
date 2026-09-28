@@ -82,6 +82,11 @@ fun normalizedYToDb(normY: Float): Float {
     return (MAX_DB - clamped * (MAX_DB - MIN_DB)).coerceIn(MIN_DB, MAX_DB)
 }
 
+private const val CURVE_STEPS = 120
+private val FREQUENCY_SAMPLES = FloatArray(CURVE_STEPS + 1) { i ->
+    normalizedXToFreq(i.toFloat() / CURVE_STEPS.toFloat())
+}
+
 /**
  * Lienzo gráfico interactivo con tecnología Compose Canvas que visualiza la curva de respuesta
  * en frecuencia acumulada (|H(f)| en dB) y provee nodos interactivos manipulables con gestos táctiles.
@@ -114,6 +119,23 @@ fun ParametricEqCanvas(
                 gainDb = band.gainDb,
                 q = band.q,
             )
+        }
+    }
+
+    // Precalculate normalized Y points of the response curve whenever bands, preampDb or enabled state changes.
+    // This removes 121 x N_bands complex trigonometric / log10 / pow calculations from each frame during drag/draw.
+    val normalizedGainYPoints = remember(biquads, preampDb, enabled) {
+        FloatArray(CURVE_STEPS + 1) { i ->
+            if (!enabled) {
+                dbToNormalizedY(0f)
+            } else {
+                val freq = FREQUENCY_SAMPLES[i]
+                var totalGainDb = preampDb
+                for (biquad in biquads) {
+                    totalGainDb += biquad.magnitudeDb(freq, SAMPLE_RATE)
+                }
+                dbToNormalizedY(totalGainDb)
+            }
         }
     }
 
@@ -260,25 +282,14 @@ fun ParametricEqCanvas(
             }
 
             // ── Frequency Response Curve ────────────────────────────────────
-            val curveSteps = 120
             val curvePath = Path()
             val fillPath = Path()
 
             var isFirst = true
-            for (i in 0..curveSteps) {
-                val normX = i.toFloat() / curveSteps.toFloat()
-                val freq = normalizedXToFreq(normX)
-
-                // Sum magnitude responses in dB of all biquads + preamp
-                var totalGainDb = if (enabled) preampDb else 0f
-                if (enabled) {
-                    for (biquad in biquads) {
-                        totalGainDb += biquad.magnitudeDb(freq, SAMPLE_RATE)
-                    }
-                }
-
+            for (i in 0..CURVE_STEPS) {
+                val normX = i.toFloat() / CURVE_STEPS.toFloat()
                 val x = normX * width
-                val y = dbToNormalizedY(totalGainDb) * height
+                val y = normalizedGainYPoints[i] * height
 
                 if (isFirst) {
                     curvePath.moveTo(x, y)
