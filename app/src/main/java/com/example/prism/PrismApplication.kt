@@ -41,11 +41,9 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             modules(appModule)
         }
 
-        // Defer MediaStore scan so it doesn't compete with cold-start UI rendering.
-        // 800ms gives the main thread enough time to draw the first frame before we
-        // hit the disk and ContentResolver for the full 600+ song library.
+        // MediaStore observation is started immediately; MediaStoreScanner checks
+        // audio permissions internally before registering ContentObserver or querying.
         appScope.launch {
-            delay(800L)
             val scannerRepository: ScannerRepository = get()
             scannerRepository.startObserving()
         }

@@ -95,7 +95,24 @@ class MediaStoreScannerImpl(
         }
     }
 
+    private fun hasAudioPermission(): Boolean {
+        val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            android.Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+            app,
+            permission,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
     override fun startObserving() {
+        if (!hasAudioPermission()) {
+            Timber.d("MediaStore scan observing deferred: missing audio storage permission")
+            return
+        }
+
         if (contentObserver == null) {
             val observer = object : ContentObserver(null) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
@@ -119,6 +136,10 @@ class MediaStoreScannerImpl(
     }
 
     override fun triggerScan() {
+        if (!hasAudioPermission()) {
+            Timber.d("MediaStore triggerScan skipped: missing audio storage permission")
+            return
+        }
         scanRequests.trySend(Unit)
     }
 
