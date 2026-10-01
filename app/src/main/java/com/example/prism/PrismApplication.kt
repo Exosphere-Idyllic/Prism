@@ -52,9 +52,15 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
 
     override fun newImageLoader(context: Context): ImageLoader {
         return ImageLoader.Builder(context)
+            .apply {
+                if (BuildConfig.DEBUG) {
+                    logger(coil3.util.DebugLogger())
+                }
+            }
+            .precision(coil3.size.Precision.INEXACT)
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.15) // 15% RAM for artwork to avoid GC thrashing
+                    .maxSizePercent(context, 0.25) // 25% RAM for artwork to guarantee smooth scrolling
                     .build()
             }
             .diskCache {
@@ -65,7 +71,7 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
                             .absolutePath
                             .toPath()
                     )
-                    .maxSizeBytes(64L * 1024 * 1024) // 64 MB
+                    .maxSizeBytes(128L * 1024 * 1024) // 128 MB disk cache
                     .build()
             }
             .components {

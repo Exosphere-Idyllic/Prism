@@ -42,7 +42,9 @@ import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.Artist
 import com.example.prism.data.entity.Song
 import com.example.prism.domain.model.PlaylistWithCount
+import com.example.prism.data.artwork.ArtworkStorage
 import com.example.prism.ui.components.EditArtworkDialog
+import kotlinx.coroutines.launch
 import com.example.prism.ui.components.EmptyLibrary
 import com.example.prism.ui.components.MiniPlayer
 import com.example.prism.ui.components.NoSearchResults
@@ -81,6 +83,7 @@ fun SongListScreen(
     val isLoading by libraryViewModel.isLoading.collectAsStateWithLifecycle()
     val totalSongs by libraryViewModel.totalSongsCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     // ── Primary tab data and states ──────────────────────────────────────────
     // songsFlow and favoriteSongIds remain hoisted because they are used directly by the main
@@ -324,7 +327,15 @@ fun SongListScreen(
             EditArtworkDialog(
                 title = song.title,
                 currentCustomUri = song.customArtworkUri,
-                onSave = { uri -> libraryViewModel.updateSongArtwork(song.id, uri) },
+                onSave = { uri ->
+                    val oldUri = song.customArtworkUri
+                    if (oldUri.isNotEmpty() && oldUri != uri) {
+                        coroutineScope.launch {
+                            ArtworkStorage.deleteIfInternalFile(context, oldUri)
+                        }
+                    }
+                    libraryViewModel.updateSongArtwork(song.id, uri)
+                },
                 onDismiss = { songToEditArtwork = null }
             )
         }

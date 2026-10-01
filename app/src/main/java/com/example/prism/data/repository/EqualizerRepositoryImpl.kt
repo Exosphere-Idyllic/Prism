@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
@@ -30,9 +31,13 @@ class EqualizerRepositoryImpl(
 
     init {
         scope.launch(dispatchers.io) {
-            preferences.equalizerConfigFlow.collect { updated ->
-                _equalizerConfig.value = updated
-            }
+            preferences.equalizerConfigFlow
+                .distinctUntilChanged()
+                .collect { updated ->
+                    _equalizerConfig.update { current ->
+                        if (updated != current) updated else current
+                    }
+                }
         }
     }
 

@@ -353,7 +353,7 @@ fun ModeSegmentedControl(
             .background(AppSurface)
             .padding(4.dp),
     ) {
-        EqualizerMode.entries.forEach { mode ->
+        EqualizerMode.values().forEach { mode ->
             val isSelected = mode == selectedMode
             val bg = if (isSelected) AppAccent else Color.Transparent
             val textCol = if (isSelected) Color.White else AppTextSecondary
@@ -433,7 +433,7 @@ fun BandInspectorCard(
                     onDismissRequest = { typeDropdownExpanded = false },
                     modifier = Modifier.background(AppSurface2),
                 ) {
-                    EqFilterType.entries.forEach { type ->
+                    EqFilterType.values().forEach { type ->
                         DropdownMenuItem(
                             text = { Text(filterTypeName(type), color = AppTextPrimary) },
                             onClick = {

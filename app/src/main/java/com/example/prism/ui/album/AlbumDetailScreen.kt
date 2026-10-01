@@ -32,6 +32,7 @@ import com.example.prism.ui.theme.*
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.launch
 
 @Composable
 fun AlbumDetailScreen(
@@ -84,11 +85,22 @@ fun AlbumDetailScreen(
         modifier = modifier,
     )
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     if (showEditCoverDialog) {
         com.example.prism.ui.components.EditArtworkDialog(
             title = albumName,
             currentCustomUri = effectiveCustomCoverUri,
-            onSave = { uri -> libraryViewModel.updateAlbumCover(albumId, uri) },
+            onSave = { uri ->
+                val oldUri = effectiveCustomCoverUri
+                if (oldUri.isNotEmpty() && oldUri != uri) {
+                    coroutineScope.launch {
+                        com.example.prism.data.artwork.ArtworkStorage.deleteIfInternalFile(context, oldUri)
+                    }
+                }
+                libraryViewModel.updateAlbumCover(albumId, uri)
+            },
             onDismiss = { showEditCoverDialog = false }
         )
     }

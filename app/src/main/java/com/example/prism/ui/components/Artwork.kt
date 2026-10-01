@@ -13,8 +13,10 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import coil3.request.crossfade
 import coil3.request.ImageRequest
 import com.example.prism.R
+import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.AlbumArtworkParams
 import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
@@ -38,7 +40,7 @@ private val DEFAULT_COVERS = intArrayOf(
  * Picks a deterministic default cover drawable based on a stable identifier.
  * Uses the hashCode so the same id always maps to the same drawable.
  */
-private fun defaultCoverRes(stableId: Any): Int {
+internal fun defaultCoverRes(stableId: Any): Int {
     val index = (stableId.hashCode() and 0x7FFFFFFF) % DEFAULT_COVERS.size
     return DEFAULT_COVERS[index]
 }
@@ -57,7 +59,7 @@ fun SongArtwork(
     song: Song?,
     contentDescription: String?,
     modifier: Modifier = Modifier,
-    size: Int = 128,
+    size: Int = 160,
     crossfade: Boolean = false,
     onPaletteLoaded: ((com.kmpalette.palette.graphics.Palette) -> Unit)? = null,
 ) {
@@ -65,10 +67,11 @@ fun SongArtwork(
 
     if (song != null) {
         val imageLoader = remember(context) { SingletonImageLoader.get(context) }
-        val imageRequest = remember(context, song.id, song.artworkUri, song.customArtworkUri, song.dateModified, size) {
+        val imageRequest = remember(song.id, song.artworkUri, song.customArtworkUri, song.dateModified) {
             ImageRequest.Builder(context)
-                .data(SongArtworkParams(song = song, size = size))
+                .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
                 .size(size)
+                .crossfade(crossfade)
                 .build()
         }
 
@@ -82,7 +85,7 @@ fun SongArtwork(
 
             val isInspectionMode = LocalInspectionMode.current
             CoilImage(
-                imageModel = { imageRequest },
+                imageRequest = { imageRequest },
                 imageLoader = { imageLoader },
                 imageOptions = ImageOptions(contentScale = ContentScale.Crop),
                 component = component,
@@ -139,17 +142,18 @@ fun AlbumArtwork(
     val context = LocalContext.current
     val imageLoader = remember(context) { SingletonImageLoader.get(context) }
 
-    val imageRequest = remember(context, albumId, coverUri, customCoverUri, size) {
+    val imageRequest = remember(albumId, coverUri, customCoverUri) {
         ImageRequest.Builder(context)
             .data(
                 AlbumArtworkParams(
                     albumId = albumId,
                     coverUri = coverUri,
                     customCoverUri = customCoverUri,
-                    size = size,
+                    size = AlbumArtFetcher.MASTER_ARTWORK_SIZE,
                 )
             )
             .size(size)
+            .crossfade(crossfade)
             .build()
     }
 

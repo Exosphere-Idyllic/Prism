@@ -7,7 +7,7 @@ import com.example.prism.data.entity.Song
  */
 data class SongArtworkParams(
     val song: Song,
-    val size: Int = 128,
+    val size: Int = 512,
 )
 
 /**
@@ -17,5 +17,5 @@ data class AlbumArtworkParams(
     val albumId: Long,
     val coverUri: String,
     val customCoverUri: String = "",
-    val size: Int = 256,
+    val size: Int = 512,
 )

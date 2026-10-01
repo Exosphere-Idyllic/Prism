@@ -10,6 +10,7 @@ import com.example.prism.player.CustomCommandDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 class EqualizerControllerImpl(
@@ -26,11 +27,14 @@ class EqualizerControllerImpl(
         }
     }
 
-    private fun dispatchConfig(config: EqualizerConfig) {
+    private suspend fun dispatchConfig(config: EqualizerConfig) {
+        val jsonStr = json.encodeToString(EqualizerConfig.serializer(), config)
         val args = Bundle().apply {
-            putString(EqualizerCommands.EXTRA_CONFIG_JSON, json.encodeToString(EqualizerConfig.serializer(), config))
+            putString(EqualizerCommands.EXTRA_CONFIG_JSON, jsonStr)
         }
-        commandDispatcher.sendCustomCommand(EqualizerCommands.COMMAND_SET_EQ_CONFIG, args)
+        withContext(dispatchers.main) {
+            commandDispatcher.sendCustomCommand(EqualizerCommands.COMMAND_SET_EQ_CONFIG, args)
+        }
     }
 
     override suspend fun setEnabled(enabled: Boolean) {

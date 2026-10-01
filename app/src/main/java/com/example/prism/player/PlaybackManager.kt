@@ -9,7 +9,12 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
+import coil3.SingletonImageLoader
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
 import com.example.prism.core.util.DispatcherProvider
+import com.example.prism.data.artwork.AlbumArtFetcher
+import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
 import com.example.prism.domain.repository.LibraryRepository
 import com.example.prism.player.toMediaItems
@@ -213,10 +218,13 @@ class PlaybackManagerImpl(
                     withContext(dispatchers.main) {
                         if (mediaController?.currentMediaItem?.mediaId == currentMediaId) {
                             _currentSong.value = dbSong
+                            warmUpArtworkCache(dbSong)
                         }
                     }
                 }
             }
+        } else if (song != null) {
+            warmUpArtworkCache(song)
         }
     }
 
@@ -228,6 +236,19 @@ class PlaybackManagerImpl(
             else -> 0L
         }
         progressTracker.onDurationChanged(resolvedDuration)
+        if (song != null) {
+            warmUpArtworkCache(song)
+        }
+    }
+
+    private fun warmUpArtworkCache(song: Song) {
+        val imageLoader = SingletonImageLoader.get(app)
+        val request = ImageRequest.Builder(app)
+            .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
+            .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .build()
+        imageLoader.enqueue(request)
     }
 
     override fun playSong(song: Song, playlistSongs: List<Song>) {
@@ -318,12 +339,14 @@ class PlaybackManagerImpl(
     }
 
     override fun sendCustomCommand(action: String, args: android.os.Bundle) {
-        val controller = mediaController
-        if (controller != null) {
-            val command = SessionCommand(action, android.os.Bundle.EMPTY)
-            controller.sendCustomCommand(command, args)
-        } else {
-            Timber.w("MediaController not connected yet; custom command %s was dropped", action)
+        scope.launch(dispatchers.main) {
+            val controller = mediaController
+            if (controller != null) {
+                val command = SessionCommand(action, android.os.Bundle.EMPTY)
+                controller.sendCustomCommand(command, args)
+            } else {
+                Timber.w("MediaController not connected yet; custom command %s was dropped", action)
+            }
         }
     }
 

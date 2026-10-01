@@ -15,11 +15,12 @@ class SongArtworkKeyer : Keyer<SongArtworkParams> {
     override fun key(data: SongArtworkParams, options: Options): String {
         // Use hashCode() for URI fields to keep disk-cache key lengths compact.
         // This matches the pattern used in AlbumArtFetcher.negativeCacheKey().
+        // Size is excluded so all components (list, mini player, full player) share the same disk cache entry.
         val customPart = if (data.song.customArtworkUri.isNotEmpty())
             "_c${data.song.customArtworkUri.hashCode()}" else ""
         val artPart = if (data.song.artworkUri.isNotEmpty())
             "_a${data.song.artworkUri.hashCode()}" else ""
-        return "sa_${data.song.id}_${data.song.dateModified}_${data.size}$customPart$artPart"
+        return "sa_${data.song.id}_${data.song.dateModified}$customPart$artPart"
     }
 }
 
@@ -30,6 +31,6 @@ class AlbumArtworkKeyer : Keyer<AlbumArtworkParams> {
     override fun key(data: AlbumArtworkParams, options: Options): String {
         val customPart = if (data.customCoverUri.isNotEmpty()) "_c${data.customCoverUri.hashCode()}" else ""
         val coverPart = if (data.coverUri.isNotEmpty()) "_a${data.coverUri.hashCode()}" else ""
-        return "aa_${data.albumId}_${data.size}$customPart$coverPart"
+        return "aa_${data.albumId}$customPart$coverPart"
     }
 }

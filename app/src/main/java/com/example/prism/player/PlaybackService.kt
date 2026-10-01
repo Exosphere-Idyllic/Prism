@@ -24,6 +24,8 @@ import com.example.prism.player.effects.EqualizerAudioProcessor
 import com.example.prism.player.effects.EqualizerCommands
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -35,6 +37,9 @@ class PlaybackService : MediaSessionService(), KoinComponent {
     private var mediaSession: MediaSession? = null
     private val equalizerAudioProcessor: EqualizerAudioProcessor by inject()
     private val equalizerRepository: EqualizerRepository by inject()
+
+    /** Coroutine scope for service-lifetime async work (e.g. CoilBitmapLoader). */
+    private val serviceScope = CoroutineScope(SupervisorJob())
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -79,6 +84,7 @@ class PlaybackService : MediaSessionService(), KoinComponent {
         )
 
         mediaSession = MediaSession.Builder(this, player)
+            .setBitmapLoader(CoilBitmapLoader(context = this, scope = serviceScope))
             .setSessionActivity(sessionActivity)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(
@@ -228,6 +234,7 @@ class PlaybackService : MediaSessionService(), KoinComponent {
             session.release()
         }
         mediaSession = null
+        serviceScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         super.onDestroy()
     }
 }

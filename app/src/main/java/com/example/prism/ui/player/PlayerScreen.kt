@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.animateColorAsState
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -106,12 +107,21 @@ fun PlayerScreen(
         modifier = modifier,
     )
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     if (showEditArtworkDialog && currentSong != null) {
         val song = currentSong!!
         EditArtworkDialog(
             title = song.title,
             currentCustomUri = song.customArtworkUri,
             onSave = { uri ->
+                val oldUri = song.customArtworkUri
+                if (oldUri.isNotEmpty() && oldUri != uri) {
+                    coroutineScope.launch {
+                        com.example.prism.data.artwork.ArtworkStorage.deleteIfInternalFile(context, oldUri)
+                    }
+                }
                 libraryViewModel.updateSongArtwork(song.id, uri)
             },
             onDismiss = { showEditArtworkDialog = false }

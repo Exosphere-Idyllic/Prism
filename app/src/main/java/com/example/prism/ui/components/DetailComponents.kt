@@ -11,15 +11,22 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
 import com.example.prism.R
+import com.example.prism.data.artwork.AlbumArtFetcher
+import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
 import com.example.prism.ui.theme.*
 import kotlinx.collections.immutable.ImmutableList
@@ -119,6 +126,28 @@ fun DetailSongList(
     listState: LazyListState = rememberLazyListState(),
     trailingAction: (@Composable (Song) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val imageLoader = remember(context) { SingletonImageLoader.get(context) }
+
+    // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling
+    LaunchedEffect(listState.firstVisibleItemIndex, songs.size) {
+        val layoutInfo = listState.layoutInfo
+        val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.size - 1)
+        if (lastVisibleIndex + 1 <= prefetchTarget) {
+            for (i in (lastVisibleIndex + 1)..prefetchTarget) {
+                val nextSong = songs.getOrNull(i)
+                if (nextSong != null) {
+                    val prefetchRequest = ImageRequest.Builder(context)
+                        .data(SongArtworkParams(song = nextSong, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
+                        .size(160)
+                        .build()
+                    imageLoader.enqueue(prefetchRequest)
+                }
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),

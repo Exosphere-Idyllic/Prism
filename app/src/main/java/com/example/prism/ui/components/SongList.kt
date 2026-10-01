@@ -46,6 +46,13 @@ import com.example.prism.ui.theme.AppSurface3
 import com.example.prism.ui.theme.AppTextPrimary
 import com.example.prism.ui.theme.AppTextSecondary
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import com.example.prism.data.artwork.AlbumArtFetcher
+import com.example.prism.data.artwork.SongArtworkParams
+
 @Composable
 fun SongList(
     songs: LazyPagingItems<Song>,
@@ -59,6 +66,28 @@ fun SongList(
     listState: LazyListState = rememberLazyListState(),
     onEditArtwork: ((Song) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val imageLoader = remember(context) { SingletonImageLoader.get(context) }
+
+    // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling
+    LaunchedEffect(listState.firstVisibleItemIndex, songs.itemCount) {
+        val layoutInfo = listState.layoutInfo
+        val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.itemCount - 1)
+        if (lastVisibleIndex + 1 <= prefetchTarget) {
+            for (i in (lastVisibleIndex + 1)..prefetchTarget) {
+                val nextSong = songs.peek(i)
+                if (nextSong != null) {
+                    val prefetchRequest = ImageRequest.Builder(context)
+                        .data(SongArtworkParams(song = nextSong, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
+                        .size(160)
+                        .build()
+                    imageLoader.enqueue(prefetchRequest)
+                }
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
