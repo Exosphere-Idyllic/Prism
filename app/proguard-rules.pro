@@ -26,3 +26,7 @@
     public static *** d(...);
     public static *** v(...);
 }
+
+# Landscapist — keep internal reflection and plugin classes
+-keep class com.skydoves.landscapist.** { *; }
+-dontwarn com.skydoves.landscapist.**

@@ -99,15 +99,13 @@ dependencies {
   implementation(libs.coil.compose)
   implementation(libs.coil.network.okhttp)
 
-  // Landscapist (Coil3 image loading with animations, palette, placeholder)
-  // Uses our existing SingletonImageLoader - no extra ImageLoader instances created.
-  // Coil 3.6.3 pinned here overrides Landscapist's transitive Coil 3.4.0 dependency.
-  // Note: Landscapist BOM is JVM-only and cannot be used as platform() in Android builds.
+  // Landscapist (Coil 3 integration + plugins)
   implementation(libs.landscapist.coil3)
   implementation(libs.landscapist.animation)
   implementation(libs.landscapist.placeholder)
   implementation(libs.landscapist.palette)
   implementation(libs.landscapist.transformation)
+
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.coroutines.android)
 
