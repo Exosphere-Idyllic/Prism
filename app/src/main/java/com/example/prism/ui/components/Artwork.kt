@@ -13,15 +13,15 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import coil3.request.allowHardware
 import coil3.request.crossfade
 import coil3.request.ImageRequest
+import coil3.toBitmap
 import com.example.prism.R
 import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.AlbumArtworkParams
 import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
-import com.skydoves.landscapist.ImageOptions
-import com.skydoves.landscapist.coil3.CoilImage
 
 /**
  * Drawable resource IDs for the 5 default cover art variations.
@@ -47,12 +47,8 @@ internal fun defaultCoverRes(stableId: Any): Int {
 
 /**
  * Displays artwork for a [Song].
- *
- * In LazyLists and normal UI components, uses highly optimized [AsyncImage] to avoid
- * subcomposition overhead and frame-drops during fast scrolling.
- *
- * When [onPaletteLoaded] is provided (full player screen), delegates to Landscapist's [CoilImage]
- * with [com.skydoves.landscapist.palette.PalettePlugin] to extract dynamic background colors.
+ * Uses highly optimized [AsyncImage] to avoid subcomposition overhead and frame-drops.
+ * When [onPaletteLoaded] is provided, extracts dynamic theme colors asynchronously via [androidx.palette.graphics.Palette].
  */
 @Composable
 fun SongArtwork(
@@ -61,57 +57,48 @@ fun SongArtwork(
     modifier: Modifier = Modifier,
     size: Int = 160,
     crossfade: Boolean = false,
-    onPaletteLoaded: ((com.kmpalette.palette.graphics.Palette) -> Unit)? = null,
+    onPaletteLoaded: ((androidx.palette.graphics.Palette) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
     if (song != null) {
         val imageLoader = remember(context) { SingletonImageLoader.get(context) }
-        val imageRequest = remember(song.id, song.artworkUri, song.customArtworkUri, song.dateModified) {
+        val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
+        val imageRequest = remember(song.id, song.artworkUri, song.customArtworkUri, song.dateModified, currentOnPaletteLoaded != null) {
             ImageRequest.Builder(context)
                 .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
                 .size(size)
                 .crossfade(crossfade)
+                .apply {
+                    if (currentOnPaletteLoaded != null) {
+                        allowHardware(false) // Software bitmap required to read pixels for Palette generation
+                    }
+                }
                 .build()
         }
 
-        if (onPaletteLoaded != null) {
-            val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
-            val component = com.skydoves.landscapist.components.rememberImageComponent {
-                +com.skydoves.landscapist.palette.PalettePlugin { palette ->
-                    currentOnPaletteLoaded.invoke(palette)
+        AsyncImage(
+            model = imageRequest,
+            imageLoader = imageLoader,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            placeholder = painterResource(defaultCoverRes(song.id)),
+            error = painterResource(defaultCoverRes(song.id)),
+            fallback = painterResource(defaultCoverRes(song.id)),
+            onSuccess = { state ->
+                currentOnPaletteLoaded?.let { callback ->
+                    val bitmap = state.result.image.toBitmap()
+                    androidx.palette.graphics.Palette.from(bitmap)
+                        .maximumColorCount(16)
+                        .generate { palette ->
+                            if (palette != null) {
+                                callback(palette)
+                            }
+                        }
                 }
-            }
-
-            val isInspectionMode = LocalInspectionMode.current
-            CoilImage(
-                imageRequest = { imageRequest },
-                imageLoader = { imageLoader },
-                imageOptions = ImageOptions(contentScale = ContentScale.Crop),
-                component = component,
-                modifier = modifier,
-                failure = {
-                    Image(
-                        painter = painterResource(defaultCoverRes(song.id)),
-                        contentDescription = contentDescription,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                },
-                previewPlaceholder = if (isInspectionMode) painterResource(defaultCoverRes(song.id)) else null,
-            )
-        } else {
-            AsyncImage(
-                model = imageRequest,
-                imageLoader = imageLoader,
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                placeholder = painterResource(defaultCoverRes(song.id)),
-                error = painterResource(defaultCoverRes(song.id)),
-                fallback = painterResource(defaultCoverRes(song.id)),
-                modifier = modifier,
-            )
-        }
+            },
+            modifier = modifier,
+        )
     } else {
         // No song at all — show a static default.
         Image(
@@ -168,3 +155,48 @@ fun AlbumArtwork(
         modifier = modifier,
     )
 }
+
+/**
+ * Displays artwork for the main player screen using Landscapist [PrismCoilImage].
+ *
+ * Configured specifically for high-res display (512px), smooth CrossfadePlugin transitions,
+ * and automatic palette extraction via PalettePlugin to drive dynamic background theming.
+ */
+@Composable
+fun PlayerSongArtwork(
+    song: Song?,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    onPrimaryColorExtracted: ((androidx.compose.ui.graphics.Color) -> Unit)? = null,
+    onPaletteLoaded: ((com.kmpalette.palette.graphics.Palette) -> Unit)? = null,
+) {
+    if (song != null) {
+        val context = LocalContext.current
+        val imageRequest = remember(song.id, song.artworkUri, song.customArtworkUri, song.dateModified) {
+            ImageRequest.Builder(context)
+                .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
+                .size(512)
+                .allowHardware(false) // Software bitmap required for Palette pixel reading
+                .build()
+        }
+
+        PrismCoilImage(
+            imageModel = { imageRequest },
+            contentDescription = contentDescription,
+            modifier = modifier,
+            placeholderRes = defaultCoverRes(song.id),
+            errorRes = defaultCoverRes(song.id),
+            crossfadeDuration = 400,
+            onPaletteLoaded = onPaletteLoaded,
+            onPrimaryColorExtracted = onPrimaryColorExtracted,
+        )
+    } else {
+        Image(
+            painter = painterResource(DEFAULT_COVERS[0]),
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+    }
+}
+

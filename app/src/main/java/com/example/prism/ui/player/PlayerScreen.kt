@@ -54,7 +54,7 @@ import com.example.prism.domain.model.LyricsSource
 import com.example.prism.domain.model.SongLyrics
 import com.example.prism.player.ProgressState
 import com.example.prism.ui.components.EditArtworkDialog
-import com.example.prism.ui.components.SongArtwork
+import com.example.prism.ui.components.PlayerSongArtwork
 import com.example.prism.ui.library.LibraryViewModel
 import com.example.prism.ui.player.components.LyricsDisplay
 import com.example.prism.ui.player.components.PlaybackControls
@@ -66,9 +66,9 @@ import com.example.prism.ui.theme.AppTextSecondary
 import com.example.prism.ui.theme.AppBgTop
 import com.example.prism.ui.theme.AppBgBottom
 import com.example.prism.ui.theme.PlayerBackgroundBrush
+import androidx.compose.animation.Animatable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.animation.animateColorAsState
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -153,36 +153,38 @@ fun PlayerContent(
 
     var showLyrics by remember { mutableStateOf(false) }
 
-    var extractedColor by remember { mutableStateOf<Color?>(null) }
-    LaunchedEffect(currentSong?.id) {
-        extractedColor = null
-    }
+    // Use Animatable so the color transition runs purely in the draw phase.
+    // Reading animatedTopColor.value inside drawBehind skips composition and layout
+    // entirely during the 600ms background animation — no recomposition occurs.
+    val animatedTopColor = remember { Animatable(AppBgTop) }
 
-    val animatedTopColor by animateColorAsState(
-        targetValue = extractedColor?.copy(alpha = 0.35f) ?: AppBgTop,
-        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
-        label = "playerBgTopAnimation"
-    )
-
-    val onPaletteLoaded: (com.kmpalette.palette.graphics.Palette) -> Unit = remember {
-        { palette ->
-            val swatch = palette.dominantSwatch
-                ?: palette.vibrantSwatch
-                ?: palette.darkVibrantSwatch
-                ?: palette.lightVibrantSwatch
-            swatch?.rgb?.let { rgb ->
-                extractedColor = Color(rgb)
-            }
+    // targetBgColor is the only state written from the palette callback.
+    // A LaunchedEffect observes it and drives the Animatable via animateTo (suspend).
+    var targetBgColor by remember { mutableStateOf(AppBgTop) }
+    val onPrimaryColorExtracted: (Color) -> Unit = remember {
+        { color ->
+            targetBgColor = color.copy(alpha = 0.35f)
         }
+    }
+    LaunchedEffect(currentSong?.id) {
+        targetBgColor = AppBgTop
+        animatedTopColor.snapTo(AppBgTop)
+    }
+    LaunchedEffect(targetBgColor) {
+        animatedTopColor.animateTo(
+            targetValue = targetBgColor,
+            animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        )
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .drawBehind {
+                // Read animatedTopColor.value here in the draw phase — no recomposition triggered.
                 drawRect(
                     brush = Brush.verticalGradient(
-                        colors = listOf(animatedTopColor, AppBgBottom)
+                        colors = listOf(animatedTopColor.value, AppBgBottom)
                     )
                 )
             },
@@ -307,12 +309,10 @@ fun PlayerContent(
                                         .background(AppSurface2)
                                         .clickable { onEditArtwork() },
                                 ) {
-                                    SongArtwork(
+                                    PlayerSongArtwork(
                                         song = crossfadeSong,
                                         contentDescription = stringResource(R.string.cd_album_art),
-                                        size = 512,
-                                        crossfade = false,
-                                        onPaletteLoaded = onPaletteLoaded,
+                                        onPrimaryColorExtracted = onPrimaryColorExtracted,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                     // Edit badge in bottom-end corner
