@@ -3,9 +3,8 @@ package com.example.prism.ui.player
 import androidx.lifecycle.ViewModel
 import com.example.prism.data.entity.Song
 import com.example.prism.player.PlaybackManager
-import kotlinx.coroutines.flow.StateFlow
-
 import com.example.prism.player.ProgressState
+import kotlinx.coroutines.flow.StateFlow
 
 class PlaybackViewModel(
     private val playbackManager: PlaybackManager,
@@ -14,6 +13,8 @@ class PlaybackViewModel(
     val currentSong: StateFlow<Song?> = playbackManager.currentSong
     val isPlayingState: StateFlow<Boolean> = playbackManager.isPlayingState
     val progressState: StateFlow<ProgressState> = playbackManager.progressState
+    val shuffleModeState: StateFlow<Boolean> = playbackManager.shuffleModeState
+    val repeatModeState: StateFlow<Int> = playbackManager.repeatModeState
 
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList()) {
         playbackManager.playSong(song, playlistSongs)
@@ -33,5 +34,13 @@ class PlaybackViewModel(
 
     fun seekTo(positionMs: Long) {
         playbackManager.seekTo(positionMs)
+    }
+
+    fun toggleShuffle() {
+        playbackManager.toggleShuffle()
+    }
+
+    fun toggleRepeatMode() {
+        playbackManager.toggleRepeatMode()
     }
 }

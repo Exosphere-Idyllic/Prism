@@ -12,6 +12,7 @@ import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -84,7 +85,11 @@ class PlaybackService : MediaSessionService(), KoinComponent {
         )
 
         mediaSession = MediaSession.Builder(this, player)
-            .setBitmapLoader(CoilBitmapLoader(context = this, scope = serviceScope))
+            .setBitmapLoader(
+                CacheBitmapLoader(
+                    CoilBitmapLoader(context = this, scope = serviceScope)
+                )
+            )
             .setSessionActivity(sessionActivity)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(

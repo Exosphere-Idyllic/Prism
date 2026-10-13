@@ -1,5 +1,6 @@
 package com.example.prism.ui.player
 
+import androidx.media3.common.Player
 import com.example.prism.data.entity.Song
 import com.example.prism.player.PlaybackManager
 import com.example.prism.player.ProgressState
@@ -15,11 +16,15 @@ class PlaybackViewModelTest {
     private val currentSongFlow = MutableStateFlow<Song?>(null)
     private val isPlayingFlow = MutableStateFlow(false)
     private val progressFlow = MutableStateFlow(ProgressState())
+    private val shuffleFlow = MutableStateFlow(false)
+    private val repeatFlow = MutableStateFlow(Player.REPEAT_MODE_OFF)
 
     private val playbackManager: PlaybackManager = mockk(relaxed = true) {
         every { currentSong } returns currentSongFlow
         every { isPlayingState } returns isPlayingFlow
         every { progressState } returns progressFlow
+        every { shuffleModeState } returns shuffleFlow
+        every { repeatModeState } returns repeatFlow
     }
 
     private val viewModel = PlaybackViewModel(playbackManager)
@@ -77,14 +82,32 @@ class PlaybackViewModelTest {
     }
 
     @Test
+    fun toggleShuffle_delegatesToPlaybackManager() {
+        viewModel.toggleShuffle()
+
+        verify(exactly = 1) { playbackManager.toggleShuffle() }
+    }
+
+    @Test
+    fun toggleRepeatMode_delegatesToPlaybackManager() {
+        viewModel.toggleRepeatMode()
+
+        verify(exactly = 1) { playbackManager.toggleRepeatMode() }
+    }
+
+    @Test
     fun stateFlows_exposePlaybackManagerFlows() {
         val song = createSong("42")
         currentSongFlow.value = song
         isPlayingFlow.value = true
         progressFlow.value = ProgressState(currentPosition = 12000L, duration = 180000L)
+        shuffleFlow.value = true
+        repeatFlow.value = Player.REPEAT_MODE_ALL
 
         assertEquals(song, viewModel.currentSong.value)
         assertEquals(true, viewModel.isPlayingState.value)
         assertEquals(ProgressState(12000L, 180000L), viewModel.progressState.value)
+        assertEquals(true, viewModel.shuffleModeState.value)
+        assertEquals(Player.REPEAT_MODE_ALL, viewModel.repeatModeState.value)
     }
 }

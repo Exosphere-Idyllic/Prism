@@ -5,14 +5,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
@@ -28,18 +29,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.Player
 import com.example.prism.R
 import com.example.prism.ui.theme.AppAccent
 import com.example.prism.ui.theme.AppAccentSoft
 import com.example.prism.ui.theme.AppSurface2
 import com.example.prism.ui.theme.AppTextPrimary
+import com.example.prism.ui.theme.AppTextSecondary
 
 @Composable
 fun PlaybackControls(
     isPlaying: Boolean,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onToggleRepeat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val playButtonBrush = remember {
@@ -48,9 +55,25 @@ fun PlaybackControls(
 
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Shuffle
+        IconButton(
+            onClick = onToggleShuffle,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(if (shuffleEnabled) AppAccentSoft.copy(alpha = 0.2f) else AppSurface2),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Shuffle,
+                contentDescription = stringResource(R.string.cd_shuffle),
+                tint = if (shuffleEnabled) AppAccentSoft else AppTextSecondary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
         // Previous
         IconButton(
             onClick = onPrevious,
@@ -66,8 +89,6 @@ fun PlaybackControls(
                 modifier = Modifier.size(28.dp),
             )
         }
-
-        Spacer(modifier = Modifier.width(20.dp))
 
         // Play / Pause
         Box(
@@ -90,8 +111,6 @@ fun PlaybackControls(
             )
         }
 
-        Spacer(modifier = Modifier.width(20.dp))
-
         // Next
         IconButton(
             onClick = onNext,
@@ -105,6 +124,25 @@ fun PlaybackControls(
                 contentDescription = stringResource(R.string.cd_next),
                 tint = AppTextPrimary,
                 modifier = Modifier.size(28.dp),
+            )
+        }
+
+        // Repeat (OFF -> ALL -> ONE)
+        val isRepeatActive = repeatMode != Player.REPEAT_MODE_OFF
+        val repeatIcon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat
+
+        IconButton(
+            onClick = onToggleRepeat,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(if (isRepeatActive) AppAccentSoft.copy(alpha = 0.2f) else AppSurface2),
+        ) {
+            Icon(
+                imageVector = repeatIcon,
+                contentDescription = stringResource(R.string.cd_repeat),
+                tint = if (isRepeatActive) AppAccentSoft else AppTextSecondary,
+                modifier = Modifier.size(22.dp),
             )
         }
     }

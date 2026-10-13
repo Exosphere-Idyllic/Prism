@@ -2,7 +2,10 @@ package com.example.prism.player
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.ContentUris
+import android.provider.MediaStore
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -12,10 +15,12 @@ import androidx.media3.session.SessionToken
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.request.allowHardware
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
+import com.example.prism.data.preferences.PlaybackPreferences
 import com.example.prism.domain.repository.LibraryRepository
 import com.example.prism.player.toMediaItems
 import com.google.common.util.concurrent.ListenableFuture
@@ -33,28 +38,32 @@ interface PlaybackManager {
     val currentSong: StateFlow<Song?>
     val isPlayingState: StateFlow<Boolean>
     val progressState: StateFlow<ProgressState>
+    val shuffleModeState: StateFlow<Boolean>
+    val repeatModeState: StateFlow<Int>
 
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList())
     fun togglePlayPause()
     fun next()
     fun previous()
     fun seekTo(positionMs: Long)
+    fun toggleShuffle()
+    fun toggleRepeatMode()
     fun release()
 }
 
 class PlaybackManagerImpl(
     private val app: Application,
     private val repository: LibraryRepository,
+    private val preferences: PlaybackPreferences,
     private val dispatchers: DispatcherProvider,
     private val scope: CoroutineScope,
 ) : PlaybackManager, CustomCommandDispatcher {
 
     companion object {
         /**
-         * Maximum number of MediaItems sent through Binder IPC in a single batch.
+         * Window size for MediaItems sent to ExoPlayer via Binder IPC.
          * Enforces safety against [android.os.TransactionTooLargeException] (1 MB Binder cap).
          */
-        private const val MAX_QUEUE_SIZE = 1000
         private const val INITIAL_WINDOW = 51
         private const val EXPAND_THRESHOLD = 35
     }
@@ -65,17 +74,29 @@ class PlaybackManagerImpl(
     private val _isPlayingState = MutableStateFlow(false)
     override val isPlayingState = _isPlayingState.asStateFlow()
 
+    private val _shuffleModeState = MutableStateFlow(false)
+    override val shuffleModeState = _shuffleModeState.asStateFlow()
+
+    private val _repeatModeState = MutableStateFlow(Player.REPEAT_MODE_OFF)
+    override val repeatModeState = _repeatModeState.asStateFlow()
+
     private val progressTracker = ProgressTracker(dispatchers, scope)
     override val progressState = progressTracker.progressState
+
+    @Volatile
+    private var originalQueueIds: List<String> = emptyList()
+
+    @Volatile
+    private var shuffledQueueIds: List<String> = emptyList()
 
     @Volatile
     private var activePlaylist: List<Song> = emptyList()
 
     @Volatile
-    private var fullPlaylist: List<Song> = emptyList()
+    private var activeWindowStart: Int = 0
 
     @Volatile
-    private var fullPlaylistWindowStart: Int = 0
+    private var cachedContextSongs: Map<String, Song>? = null
 
     private val pendingPlay = AtomicReference<Pair<Song, List<Song>>?>(null)
 
@@ -96,6 +117,13 @@ class PlaybackManagerImpl(
     }
 
     init {
+        scope.launch(dispatchers.main) {
+            val restoredShuffle = withContext(dispatchers.io) { preferences.getShuffleEnabled() }
+            val restoredRepeat = withContext(dispatchers.io) { preferences.getRepeatMode() }
+            _shuffleModeState.value = restoredShuffle
+            _repeatModeState.value = restoredRepeat
+            mediaController?.repeatMode = restoredRepeat
+        }
         initializeController()
     }
 
@@ -135,6 +163,8 @@ class PlaybackManagerImpl(
     private fun setupController(controller: MediaController) {
         playerListener?.let { mediaController?.removeListener(it) }
 
+        controller.repeatMode = _repeatModeState.value
+
         if (controller.mediaItemCount > 0) {
             syncStateFromController(controller)
         }
@@ -150,6 +180,15 @@ class PlaybackManagerImpl(
                 if (playbackState == Player.STATE_ENDED) {
                     _isPlayingState.value = false
                     progressTracker.onPlayingChanged(false)
+                }
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                if (_repeatModeState.value != repeatMode) {
+                    _repeatModeState.value = repeatMode
+                    scope.launch(dispatchers.io) {
+                        preferences.setRepeatMode(repeatMode)
+                    }
                 }
             }
 
@@ -181,8 +220,9 @@ class PlaybackManagerImpl(
                 }
 
                 // Incremental queue expansion when user advances near the end of active window
+                val activeQueue = if (_shuffleModeState.value) shuffledQueueIds else originalQueueIds
                 val currentIndex = controller.currentMediaItemIndex
-                if (currentIndex >= EXPAND_THRESHOLD && (fullPlaylistWindowStart + activePlaylist.size) < fullPlaylist.size) {
+                if (currentIndex >= EXPAND_THRESHOLD && (activeWindowStart + activePlaylist.size) < activeQueue.size) {
                     expandQueueIfNeeded(controller)
                 }
             }
@@ -190,7 +230,7 @@ class PlaybackManagerImpl(
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
                 newPosition: Player.PositionInfo,
-                reason: Int
+                reason: Int,
             ) {
                 if (reason == Player.DISCONTINUITY_REASON_SEEK ||
                     reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
@@ -249,6 +289,40 @@ class PlaybackManagerImpl(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .build()
         imageLoader.enqueue(request)
+
+        val mediaItemArtworkUri = when {
+            song.customArtworkUri.isNotEmpty() -> song.customArtworkUri.toUri()
+            song.artworkUri.isNotEmpty() -> song.artworkUri.toUri()
+            song.albumId > 0L -> ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, song.albumId)
+            song.mediaUri.isNotEmpty() -> song.mediaUri.toUri()
+            else -> null
+        }
+        if (mediaItemArtworkUri != null) {
+            val uriRequest = ImageRequest.Builder(app)
+                .data(mediaItemArtworkUri)
+                .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
+                .allowHardware(false) // Must be software-rendered for notifications
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .build()
+            imageLoader.enqueue(uriRequest)
+        }
+    }
+
+    private suspend fun resolveSongs(ids: List<String>): List<Song> {
+        if (ids.isEmpty()) return emptyList()
+        val cached = cachedContextSongs
+        return if (cached != null && cached.isNotEmpty()) {
+            val resolvedFromCache = ids.mapNotNull { cached[it] }
+            if (resolvedFromCache.size == ids.size) {
+                resolvedFromCache
+            } else {
+                val missingIds = ids.filterNot { cached.containsKey(it) }
+                val fromDb = repository.getSongsByIds(missingIds).associateBy { it.id }
+                ids.mapNotNull { cached[it] ?: fromDb[it] }
+            }
+        } else {
+            repository.getSongsByIds(ids)
+        }
     }
 
     override fun playSong(song: Song, playlistSongs: List<Song>) {
@@ -261,32 +335,54 @@ class PlaybackManagerImpl(
         playJob?.cancel()
 
         playJob = scope.launch(dispatchers.main) {
-            val allSongs: List<Song> = withContext(dispatchers.io) {
-                val base = playlistSongs.ifEmpty { repository.getAllSongs() }
-                if (base.none { it.id == song.id }) listOf(song) + base else base
+            val originalIds: List<String> = withContext(dispatchers.io) {
+                if (playlistSongs.isNotEmpty()) {
+                    cachedContextSongs = playlistSongs.associateBy { it.id }
+                    val ids = playlistSongs.map { it.id }
+                    if (!ids.contains(song.id)) listOf(song.id) + ids else ids
+                } else {
+                    cachedContextSongs = null
+                    val ids = repository.getAllSongIds()
+                    if (!ids.contains(song.id)) listOf(song.id) + ids else ids
+                }
+            }
+            originalQueueIds = originalIds
+
+            val isShuffle = _shuffleModeState.value
+            val activeQueue = if (isShuffle) {
+                val remaining = (originalIds - song.id).shuffled()
+                val shuffled = listOf(song.id) + remaining
+                shuffledQueueIds = shuffled
+                shuffled
+            } else {
+                shuffledQueueIds = emptyList()
+                originalIds
             }
 
-            // Windowing to avoid IPC bottlenecks & huge memory spikes:
-            // Center a small initial window (INITIAL_WINDOW) around the selected song.
-            val rawIndex = allSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-            val windowSize = INITIAL_WINDOW.coerceAtMost(allSongs.size)
+            // Windowing to avoid IPC bottlenecks: center around selected song
+            val rawIndex = activeQueue.indexOf(song.id).coerceAtLeast(0)
+            val windowSize = INITIAL_WINDOW.coerceAtMost(activeQueue.size)
             val halfWindow = windowSize / 2
-            val windowStart = (rawIndex - halfWindow).coerceIn(0, (allSongs.size - windowSize).coerceAtLeast(0))
-            val windowEnd = (windowStart + windowSize).coerceAtMost(allSongs.size)
+            val windowStart = (rawIndex - halfWindow).coerceIn(0, (activeQueue.size - windowSize).coerceAtLeast(0))
+            val windowEnd = (windowStart + windowSize).coerceAtMost(activeQueue.size)
 
-            val windowedSongs = allSongs.subList(windowStart, windowEnd)
-            activePlaylist = windowedSongs
-            fullPlaylist = allSongs
-            fullPlaylistWindowStart = windowStart
+            val windowIds = activeQueue.subList(windowStart, windowEnd)
+            activeWindowStart = windowStart
 
-            val startIndex = windowedSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+            val windowSongs = withContext(dispatchers.io) {
+                resolveSongs(windowIds)
+            }
+            activePlaylist = windowSongs
+
+            val startIndex = windowSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
 
             val mediaItems: List<MediaItem> = withContext(dispatchers.default) {
-                windowedSongs.toMediaItems()
+                windowSongs.toMediaItems()
             }
 
             try {
                 _currentSong.value = song
+                controller.repeatMode = _repeatModeState.value
                 controller.setMediaItems(mediaItems, startIndex, 0L)
                 if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
                 controller.play()
@@ -297,23 +393,95 @@ class PlaybackManagerImpl(
     }
 
     private fun expandQueueIfNeeded(controller: MediaController) {
-        val currentEnd = fullPlaylistWindowStart + activePlaylist.size
-        val newEnd = (currentEnd + INITIAL_WINDOW).coerceAtMost(fullPlaylist.size)
+        val activeQueue = if (_shuffleModeState.value) shuffledQueueIds else originalQueueIds
+        val currentEnd = activeWindowStart + activePlaylist.size
+        val newEnd = (currentEnd + INITIAL_WINDOW).coerceAtMost(activeQueue.size)
         if (newEnd <= currentEnd) return
 
+        val idsToAdd = activeQueue.subList(currentEnd, newEnd)
+
         scope.launch(dispatchers.default) {
-            val songsToAdd = fullPlaylist.subList(currentEnd, newEnd)
+            val songsToAdd = withContext(dispatchers.io) {
+                resolveSongs(idsToAdd)
+            }
             val newItems = songsToAdd.toMediaItems()
 
             withContext(dispatchers.main) {
                 try {
                     controller.addMediaItems(newItems)
-                    activePlaylist = fullPlaylist.subList(fullPlaylistWindowStart, newEnd)
+                    activePlaylist = activePlaylist + songsToAdd
                     Timber.d("Expanded queue by %d items (total in active window: %d)", newItems.size, activePlaylist.size)
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to expand queue in PlaybackManager")
                 }
             }
+        }
+    }
+
+    override fun toggleShuffle() {
+        val newShuffle = !_shuffleModeState.value
+        _shuffleModeState.value = newShuffle
+        scope.launch(dispatchers.io) {
+            preferences.setShuffleEnabled(newShuffle)
+        }
+
+        val controller = mediaController ?: return
+        val currentSong = _currentSong.value ?: return
+        if (originalQueueIds.isEmpty()) return
+
+        playJob?.cancel()
+        playJob = scope.launch(dispatchers.main) {
+            val activeQueue = if (newShuffle) {
+                val remaining = (originalQueueIds - currentSong.id).shuffled()
+                val shuffled = listOf(currentSong.id) + remaining
+                shuffledQueueIds = shuffled
+                shuffled
+            } else {
+                shuffledQueueIds = emptyList()
+                originalQueueIds
+            }
+
+            val rawIndex = activeQueue.indexOf(currentSong.id).coerceAtLeast(0)
+            val windowSize = INITIAL_WINDOW.coerceAtMost(activeQueue.size)
+            val halfWindow = windowSize / 2
+            val windowStart = (rawIndex - halfWindow).coerceIn(0, (activeQueue.size - windowSize).coerceAtLeast(0))
+            val windowEnd = (windowStart + windowSize).coerceAtMost(activeQueue.size)
+
+            val windowIds = activeQueue.subList(windowStart, windowEnd)
+            activeWindowStart = windowStart
+
+            val windowSongs = withContext(dispatchers.io) {
+                resolveSongs(windowIds)
+            }
+            activePlaylist = windowSongs
+
+            val startIndex = windowSongs.indexOfFirst { it.id == currentSong.id }.coerceAtLeast(0)
+            val currentPos = controller.currentPosition.coerceAtLeast(0L)
+
+            val mediaItems = withContext(dispatchers.default) {
+                windowSongs.toMediaItems()
+            }
+
+            try {
+                controller.setMediaItems(mediaItems, startIndex, currentPos)
+                controller.play()
+            } catch (e: Exception) {
+                Timber.e(e, "setMediaItems failed in toggleShuffle")
+            }
+        }
+    }
+
+    override fun toggleRepeatMode() {
+        val nextMode = when (_repeatModeState.value) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            Player.REPEAT_MODE_ONE -> Player.REPEAT_MODE_OFF
+            else -> Player.REPEAT_MODE_OFF
+        }
+        _repeatModeState.value = nextMode
+        mediaController?.repeatMode = nextMode
+        scope.launch(dispatchers.io) {
+            preferences.setRepeatMode(nextMode)
         }
     }
 

@@ -30,7 +30,38 @@ class SongArtworkKeyer : Keyer<SongArtworkParams> {
 class AlbumArtworkKeyer : Keyer<AlbumArtworkParams> {
     override fun key(data: AlbumArtworkParams, options: Options): String {
         val customPart = if (data.customCoverUri.isNotEmpty()) "_c${data.customCoverUri.hashCode()}" else ""
-        val coverPart = if (data.coverUri.isNotEmpty()) "_a${data.coverUri.hashCode()}" else ""
+        val coverPart = if (data.coverUri.isNotEmpty() && !data.coverUri.contains("audio/albums") && !data.coverUri.contains("audio/albumart"))
+            "_a${data.coverUri.hashCode()}" else ""
         return "aa_${data.albumId}$customPart$coverPart"
     }
 }
+
+/**
+ * Coil [Keyer] for MediaStore [android.net.Uri] instances.
+ * Maps album URIs to the unified album cache key so notifications and UI share cached bitmaps.
+ */
+class MediaStoreArtworkKeyer : Keyer<android.net.Uri> {
+    override fun key(data: android.net.Uri, options: Options): String? {
+        val uriStr = data.toString()
+        return when {
+            uriStr.contains("audio/albums") || uriStr.contains("audio/albumart") -> {
+                val albumId = try {
+                    android.content.ContentUris.parseId(data)
+                } catch (_: Exception) {
+                    0L
+                }
+                if (albumId > 0L) "aa_$albumId" else null
+            }
+            uriStr.contains("audio/media") -> {
+                val songId = try {
+                    android.content.ContentUris.parseId(data)
+                } catch (_: Exception) {
+                    0L
+                }
+                if (songId > 0L) "sa_media_$songId" else null
+            }
+            else -> null
+        }
+    }
+}
+

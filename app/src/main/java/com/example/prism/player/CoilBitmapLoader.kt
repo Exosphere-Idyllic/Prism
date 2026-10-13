@@ -3,6 +3,7 @@ package com.example.prism.player
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.BitmapLoader
 import coil3.SingletonImageLoader
@@ -24,9 +25,9 @@ import kotlinx.coroutines.launch
  * Media3's default [androidx.media3.datasource.DataSourceBitmapLoader] queries
  * `audio_albums` using the legacy `_data` column which was removed in Android 10 (Q),
  * causing a [android.database.sqlite.SQLiteException] on modern devices. This loader
- * replaces that path entirely by routing through Coil, which already handles
- * `content://media/external/audio/albums/…` URIs correctly via its built-in
- * [coil3.fetch.ContentUriFetcher].
+ * replaces that path entirely by routing through Coil and [AlbumArtFetcher.UriFactory],
+ * which handles `content://media/external/audio/albums/…` and `audio/media/…` URIs
+ * correctly via `ContentResolver.loadThumbnail` and [android.media.MediaMetadataRetriever].
  *
  * Bitmaps for notifications **must not** be hardware-backed, so [allowHardware] is
  * explicitly set to `false` for every request dispatched by this loader.
@@ -37,17 +38,42 @@ class CoilBitmapLoader(
     private val scope: CoroutineScope,
 ) : BitmapLoader {
 
-    override fun supportsMimeType(mimeType: String): Boolean = false
+    override fun supportsMimeType(mimeType: String): Boolean =
+        mimeType.startsWith("image/")
 
     override fun decodeBitmap(data: ByteArray): ListenableFuture<Bitmap> {
         val future = SettableFuture.create<Bitmap>()
-        future.setException(UnsupportedOperationException("CoilBitmapLoader does not decode raw bytes"))
+        val job = scope.launch(Dispatchers.IO) {
+            try {
+                val imageLoader = SingletonImageLoader.get(context)
+                val request = ImageRequest.Builder(context)
+                    .data(data)
+                    .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
+                    .allowHardware(false) // Notification bitmaps must be software-rendered
+                    .build()
+                val result = imageLoader.execute(request)
+                if (result is SuccessResult) {
+                    future.set(result.image.toBitmap())
+                } else {
+                    future.setException(
+                        IllegalStateException("Coil returned a non-success result for byte array")
+                    )
+                }
+            } catch (e: Exception) {
+                future.setException(e)
+            }
+        }
+        future.addListener({
+            if (future.isCancelled) {
+                job.cancel()
+            }
+        }, ContextCompat.getMainExecutor(context))
         return future
     }
 
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
         val future = SettableFuture.create<Bitmap>()
-        scope.launch(Dispatchers.IO) {
+        val job = scope.launch(Dispatchers.IO) {
             try {
                 val imageLoader = SingletonImageLoader.get(context)
                 val request = ImageRequest.Builder(context)
@@ -67,6 +93,11 @@ class CoilBitmapLoader(
                 future.setException(e)
             }
         }
+        future.addListener({
+            if (future.isCancelled) {
+                job.cancel()
+            }
+        }, ContextCompat.getMainExecutor(context))
         return future
     }
 }

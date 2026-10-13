@@ -84,6 +84,8 @@ fun PlayerScreen(
 ) {
     val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlayingState.collectAsStateWithLifecycle()
+    val shuffleEnabled by viewModel.shuffleModeState.collectAsStateWithLifecycle()
+    val repeatMode by viewModel.repeatModeState.collectAsStateWithLifecycle()
     val songLyrics by lyricsViewModel.songLyrics.collectAsStateWithLifecycle()
     var showEditArtworkDialog by remember { mutableStateOf(false) }
 
@@ -94,6 +96,8 @@ fun PlayerScreen(
     PlayerContent(
         currentSong = currentSong,
         isPlaying = isPlaying,
+        shuffleEnabled = shuffleEnabled,
+        repeatMode = repeatMode,
         progressState = viewModel.progressState,
         songLyrics = songLyrics,
         onSelectLyricsSource = { lyricsViewModel.selectSource(it) },
@@ -102,6 +106,8 @@ fun PlayerScreen(
         onPlayPauseToggle = { viewModel.togglePlayPause() },
         onNext = { viewModel.next() },
         onPrevious = { viewModel.previous() },
+        onToggleShuffle = { viewModel.toggleShuffle() },
+        onToggleRepeat = { viewModel.toggleRepeatMode() },
         onSeek = { ms -> viewModel.seekTo(ms) },
         onEditArtwork = { showEditArtworkDialog = true },
         modifier = modifier,
@@ -133,6 +139,8 @@ fun PlayerScreen(
 fun PlayerContent(
     currentSong: Song?,
     isPlaying: Boolean,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
     progressState: StateFlow<ProgressState>,
     songLyrics: SongLyrics?,
     onSelectLyricsSource: (LyricsSource) -> Unit,
@@ -140,6 +148,8 @@ fun PlayerContent(
     onPlayPauseToggle: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onToggleRepeat: () -> Unit,
     onSeek: (Long) -> Unit,
     onEditArtwork: () -> Unit = {},
     onNavigateToEqualizer: () -> Unit = {},
@@ -375,9 +385,13 @@ fun PlayerContent(
             // ── Controls ───────────────────────────────────────────────────
             PlaybackControls(
                 isPlaying = isPlaying,
+                shuffleEnabled = shuffleEnabled,
+                repeatMode = repeatMode,
                 onPlayPauseToggle = onPlayPauseToggle,
                 onNext = onNext,
                 onPrevious = onPrevious,
+                onToggleShuffle = onToggleShuffle,
+                onToggleRepeat = onToggleRepeat,
             )
 
             Spacer(modifier = Modifier.height(20.dp))

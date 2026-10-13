@@ -176,18 +176,20 @@ private fun SyncedLyricsView(
 ) {
     val listState = rememberLazyListState()
 
-    // Find active line index via derivedStateOf so recomposition only fires when active index changes
-    val activeIndex by remember(lines) {
+    // derivedStateOf wraps currentPositionProvider so recomposition of SyncedLyricsView
+    // only fires when the *active index* changes, not on every position tick.
+    val activeIndexState = remember(lines) {
         derivedStateOf {
             val pos = currentPositionProvider()
             lines.indexOfLast { it.timestampMs <= pos }
         }
     }
 
-    LaunchedEffect(activeIndex) {
-        if (activeIndex >= 0) {
-            val targetIndex = (activeIndex - 2).coerceAtLeast(0)
-            listState.animateScrollToItem(targetIndex)
+    // Scroll to keep the active line visible — LaunchedEffect restarts only when index changes.
+    LaunchedEffect(activeIndexState.value) {
+        val idx = activeIndexState.value
+        if (idx >= 0) {
+            listState.animateScrollToItem((idx - 2).coerceAtLeast(0))
         }
     }
 
@@ -202,9 +204,12 @@ private fun SyncedLyricsView(
             key = { index, line -> "${line.timestampMs}_$index" },
             contentType = { _, _ -> "synced_lyrics_line" }
         ) { index, line ->
+            // Pass a lambda provider rather than a Boolean so each item isolates its own
+            // state read — only the two items that flip active/inactive recompose on index change.
             SyncedLyricsLineItem(
                 line = line,
-                isActive = index == activeIndex,
+                activeIndexProvider = { activeIndexState.value },
+                myIndex = index,
                 onSeekTo = onSeekTo,
             )
         }
@@ -214,20 +219,28 @@ private fun SyncedLyricsView(
 @Composable
 private fun SyncedLyricsLineItem(
     line: LyricsLine,
-    isActive: Boolean,
+    activeIndexProvider: () -> Int,
+    myIndex: Int,
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // derivedStateOf means this item only recomposes when ITS OWN active state flips.
+    val isActive by remember(myIndex) {
+        derivedStateOf { activeIndexProvider() == myIndex }
+    }
+
     val textColor by animateColorAsState(
         targetValue = if (isActive) Color.White else AppTextSecondary.copy(alpha = 0.5f),
         animationSpec = tween(durationMillis = 250),
-        label = "lyricsColor",
+        label = "lyricsColor_$myIndex",
     )
 
+    // Keep fontSize stable (no layout pass on every active-line change).
+    // Use fontWeight + alpha for visual distinction instead of size change.
     Text(
         text = line.text,
         color = textColor,
-        fontSize = if (isActive) 20.sp else 16.sp,
+        fontSize = 17.sp,
         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
         textAlign = TextAlign.Center,
         modifier = modifier
@@ -236,6 +249,7 @@ private fun SyncedLyricsLineItem(
             .padding(vertical = 4.dp),
     )
 }
+
 
 @Composable
 private fun UnsyncedLyricsView(

@@ -14,6 +14,9 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY title ASC")
     suspend fun getAllSongs(): List<Song>
 
+    @Query("SELECT id FROM songs ORDER BY title ASC")
+    suspend fun getAllSongIds(): List<String>
+
     @Query("SELECT COUNT(*) FROM songs")
     fun getSongCountFlow(): Flow<Int>
 

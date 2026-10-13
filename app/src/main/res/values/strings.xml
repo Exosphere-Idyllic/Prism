@@ -42,6 +42,8 @@
     <string name="cd_play_pause">Play or pause</string>
     <string name="cd_previous">Previous</string>
     <string name="cd_next">Next</string>
+    <string name="cd_shuffle">Shuffle</string>
+    <string name="cd_repeat">Repeat</string>
     <string name="cd_search">Search</string>
     <string name="cd_favorite">Favorite</string>
     <string name="cd_more_options">More options</string>

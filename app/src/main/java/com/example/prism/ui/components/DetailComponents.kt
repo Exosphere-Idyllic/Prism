@@ -13,9 +13,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -129,23 +131,29 @@ fun DetailSongList(
     val context = LocalContext.current
     val imageLoader = remember(context) { SingletonImageLoader.get(context) }
 
-    // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling
-    LaunchedEffect(listState.firstVisibleItemIndex, songs.size) {
-        val layoutInfo = listState.layoutInfo
-        val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
-        val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.size - 1)
-        if (lastVisibleIndex + 1 <= prefetchTarget) {
-            for (i in (lastVisibleIndex + 1)..prefetchTarget) {
-                val nextSong = songs.getOrNull(i)
-                if (nextSong != null) {
+    // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling.
+    // snapshotFlow + distinctUntilChanged ensures prefetch triggers only when the visible
+    // boundary actually moves forward, avoiding redundant enqueue calls on micro-scrolls.
+    LaunchedEffect(listState, imageLoader) {
+        var lastPrefetchedUpTo = -1
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }
+            .distinctUntilChanged()
+            .collect { lastVisibleIndex ->
+                if (lastVisibleIndex < 0) return@collect
+                val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.size - 1)
+                if (prefetchTarget <= lastPrefetchedUpTo) return@collect
+                for (i in (lastVisibleIndex + 1)..prefetchTarget) {
+                    val nextSong = songs.getOrNull(i) ?: continue
                     val prefetchRequest = ImageRequest.Builder(context)
                         .data(SongArtworkParams(song = nextSong, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
                         .size(160)
                         .build()
                     imageLoader.enqueue(prefetchRequest)
                 }
+                lastPrefetchedUpTo = prefetchTarget
             }
-        }
     }
 
     LazyColumn(

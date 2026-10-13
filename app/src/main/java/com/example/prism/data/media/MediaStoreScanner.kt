@@ -152,15 +152,22 @@ class MediaStoreScannerImpl(
     }
 
     private suspend fun doScan() {
-        _isLoading.value = true
+        val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
+        val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
+        val isFullScan = roomSongsInfo.isEmpty()
+
+        // For initial full scans (empty DB), display loading immediately.
+        // For incremental scans (cold start with existing library), defer loading state
+        // until actual changes are detected to avoid UI recomposition churn during startup.
+        if (isFullScan) {
+            _isLoading.value = true
+        }
+
         try {
-            val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
-            val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
             val mediaStoreIds = queryMediaStoreIds()
 
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
-            val isFullScan = roomSongsInfo.isEmpty()
 
             if (mediaStoreIds != null) {
                 if (isFullScan) {
@@ -217,6 +224,11 @@ class MediaStoreScannerImpl(
                 emptyList()
             }
 
+            val hasChanges = toUpsert.isNotEmpty() || toDelete.isNotEmpty()
+            if (!isFullScan && hasChanges) {
+                _isLoading.value = true
+            }
+
             withContext(NonCancellable) {
                 database.withTransaction {
                     if (toUpsert.isNotEmpty()) {
@@ -228,13 +240,13 @@ class MediaStoreScannerImpl(
                         }
                     }
 
-                    if (toUpsert.isNotEmpty() || toDelete.isNotEmpty() || isFullScan) {
+                    if (hasChanges || isFullScan) {
                         metadataUpdater.updateMetadata(toUpsert, oldSongs, songsToDelete, isFullScan)
                     }
                 }
             }
 
-            if (toUpsert.isNotEmpty() || toDelete.isNotEmpty() || isFullScan) {
+            if (hasChanges || isFullScan) {
                 val changedSongIds = (toUpsert.map { it.id } + toDelete).distinct()
                 val changedAlbumIds = (toUpsert.map { it.albumId } + oldSongs.map { it.albumId } + songsToDelete.map { it.albumId }).distinct()
                 onScanChanged?.invoke(changedSongIds, changedAlbumIds, isFullScan)

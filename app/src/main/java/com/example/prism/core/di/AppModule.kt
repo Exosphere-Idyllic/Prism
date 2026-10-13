@@ -13,6 +13,7 @@ import com.example.prism.domain.repository.LyricsRepository
 import com.example.prism.domain.repository.PlaylistRepository
 import com.example.prism.domain.repository.ScannerRepository
 import com.example.prism.data.preferences.EqualizerPreferences
+import com.example.prism.data.preferences.PlaybackPreferences
 import com.example.prism.data.repository.EqualizerRepositoryImpl
 import com.example.prism.domain.repository.EqualizerRepository
 import com.example.prism.player.CustomCommandDispatcher
@@ -56,10 +57,13 @@ val appModule = module {
         )
     }
 
+    single { PlaybackPreferences(context = get()) }
+
     single {
         PlaybackManagerImpl(
             app = get(),
             repository = get<LibraryRepository>(),
+            preferences = get(),
             dispatchers = get(),
             scope = get(),
         )

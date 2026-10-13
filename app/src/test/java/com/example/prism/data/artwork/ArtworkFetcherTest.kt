@@ -4,7 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class ArtworkFetcherTest {
 
     @Test
@@ -74,6 +77,70 @@ class ArtworkFetcherTest {
         val key256 = keyer.key(AlbumArtworkParams(albumId = 42L, coverUri = "uri", size = 256), options)
         val key512 = keyer.key(AlbumArtworkParams(albumId = 42L, coverUri = "uri", size = 512), options)
         assertEquals(key256, key512)
+    }
+
+    @Test
+    fun mediaStoreArtworkKeyer_mapsAlbumUrisCorrectly() {
+        val keyer = MediaStoreArtworkKeyer()
+        val options = coil3.request.Options(android.app.Application())
+        val albumUri = android.net.Uri.parse("content://media/external/audio/albums/42")
+        val key = keyer.key(albumUri, options)
+        assertEquals("aa_42", key)
+    }
+
+    @Test
+    fun albumArtworkKeyer_matchesMediaStoreArtworkKeyerForAlbumUris() {
+        val albumKeyer = AlbumArtworkKeyer()
+        val mediaStoreKeyer = MediaStoreArtworkKeyer()
+        val options = coil3.request.Options(android.app.Application())
+        val albumUri = android.net.Uri.parse("content://media/external/audio/albums/42")
+
+        val keyFromParams = albumKeyer.key(
+            AlbumArtworkParams(albumId = 42L, coverUri = albumUri.toString()),
+            options
+        )
+        val keyFromUri = mediaStoreKeyer.key(albumUri, options)
+
+        assertEquals("aa_42", keyFromParams)
+        assertEquals(keyFromParams, keyFromUri)
+    }
+
+    @Test
+    fun mediaStoreArtworkKeyer_mapsSongUrisCorrectly() {
+        val keyer = MediaStoreArtworkKeyer()
+        val options = coil3.request.Options(android.app.Application())
+        val songUri = android.net.Uri.parse("content://media/external/audio/media/100")
+        val key = keyer.key(songUri, options)
+        assertEquals("sa_media_100", key)
+    }
+
+    @Test
+    fun mediaStoreArtworkKeyer_returnsNullForNonAudioUris() {
+        val keyer = MediaStoreArtworkKeyer()
+        val options = coil3.request.Options(android.app.Application())
+        val imageUri = android.net.Uri.parse("content://media/external/images/media/5")
+        val key = keyer.key(imageUri, options)
+        org.junit.Assert.assertNull(key)
+    }
+
+    @Test
+    fun uriFactory_createsFetcherForAudioUris() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        val factory = AlbumArtFetcher.UriFactory()
+        val options = coil3.request.Options(app)
+        val imageLoader = coil3.ImageLoader(app)
+
+        val albumUri = android.net.Uri.parse("content://media/external/audio/albums/42")
+        val fetcherAlbum = factory.create(albumUri, options, imageLoader)
+        org.junit.Assert.assertNotNull(fetcherAlbum)
+
+        val songUri = android.net.Uri.parse("content://media/external/audio/media/100")
+        val fetcherSong = factory.create(songUri, options, imageLoader)
+        org.junit.Assert.assertNotNull(fetcherSong)
+
+        val webUri = android.net.Uri.parse("https://example.com/art.jpg")
+        val fetcherWeb = factory.create(webUri, options, imageLoader)
+        org.junit.Assert.assertNull(fetcherWeb)
     }
 }
 

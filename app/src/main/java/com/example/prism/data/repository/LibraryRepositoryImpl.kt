@@ -35,6 +35,17 @@ class LibraryRepositoryImpl(
         songDao.getAllSongs()
     }
 
+    override suspend fun getAllSongIds(): List<String> = withContext(dispatchers.io) {
+        songDao.getAllSongIds()
+    }
+
+    override suspend fun getSongsByIds(ids: List<String>): List<Song> = withContext(dispatchers.io) {
+        if (ids.isEmpty()) return@withContext emptyList()
+        val songs = songDao.getSongsByIds(ids)
+        val songMap = songs.associateBy { it.id }
+        ids.mapNotNull { songMap[it] }
+    }
+
     override fun getSongsFlow(query: String): Flow<PagingData<Song>> {
         return Pager(
             config = PagingConfig(

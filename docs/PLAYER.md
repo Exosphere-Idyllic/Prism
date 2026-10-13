@@ -94,11 +94,16 @@ interface PlaybackManager {
     val currentSong: StateFlow<Song?>
     val isPlayingState: StateFlow<Boolean>
     val progressState: StateFlow<ProgressState>
+    val shuffleModeState: StateFlow<Boolean>
+    val repeatModeState: StateFlow<Int>
+
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList())
     fun togglePlayPause()
     fun next()
     fun previous()
     fun seekTo(positionMs: Long)
+    fun toggleShuffle()
+    fun toggleRepeatMode()
     fun release()
 }
 ```
@@ -113,11 +118,20 @@ Puntos destacables de la implementación:
   `MediaController` esté listo, la petición se guarda en un
   `AtomicReference<Pair<Song, List<Song>>?>` (`pendingPlay`) y se ejecuta en
   cuanto la conexión se completa.
-- **Ventaneo de la cola (`MAX_QUEUE_SIZE = 1000`)**: al llamar a `playSong`
-  con una librería muy grande, en lugar de enviar todos los `MediaItem` al
-  servicio (que viaja por Binder IPC, con un límite práctico de ~1 MB por
-  transacción — `TransactionTooLargeException`), se recorta una ventana de
-  como máximo 1000 canciones centrada en la canción seleccionada.
+- **Cola Virtual basada en IDs y Ventaneo (`INITIAL_WINDOW = 51`)**: al reproducir
+  desde la biblioteca completa, en lugar de invocar `getAllSongs()` (que cargaba
+  miles de entidades pesadas con Strings y URIs en memoria causando GC janks),
+  se utiliza `getAllSongIds()` (`SELECT id FROM songs`). ExoPlayer recibe una
+  ventana deslizante de 51 pistas resueltas bajo demanda con `getSongsByIds()`,
+  lo que garantiza seguridad contra `TransactionTooLargeException` en Binder IPC.
+- **Reproducción Aleatoria (Shuffle)**: gestionada mediante una cola virtual de IDs
+  en memoria (`shuffledQueueIds`). Al activar shuffle, la canción actual se mantiene
+  y las restantes se barajan aleatoriamente. Al reproducir desde un álbum o playlist
+  contextual, la cola adopta exclusivamente los IDs de esa lista.
+- **Modo de Repetición (Repeat Mode)**: cicla de forma nativa entre `REPEAT_MODE_OFF`,
+  `REPEAT_MODE_ALL` y `REPEAT_MODE_ONE` comunicándolo directamente al `MediaController`.
+- **Persistencia en DataStore**: `PlaybackPreferences` persiste tanto `shuffle_enabled`
+  como `repeat_mode` para restaurarlos al inicializar el reproductor.
 - **Resolución de metadatos ausentes**: si el `MediaController` reporta una
   transición a una canción que no está en `activePlaylist` en memoria (poco
   habitual, pero posible tras reconexión), se resuelve consultando

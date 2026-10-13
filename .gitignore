@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Graphify / Engram
+.engram/cache/
+.engram/branch.json
+.engram/worktree.json
+.engram/needs_update
