@@ -12,10 +12,8 @@ import com.example.prism.domain.repository.ScannerRepository
 import com.example.prism.data.artwork.SongArtworkKeyer
 import com.example.prism.core.di.appModule
 import com.example.prism.BuildConfig
+import com.example.prism.core.util.DispatcherProvider
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
 import org.koin.android.ext.android.get
@@ -25,8 +23,6 @@ import org.koin.core.context.startKoin
 import timber.log.Timber
 
 class PrismApplication : Application(), SingletonImageLoader.Factory {
-
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
@@ -39,6 +35,15 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             androidLogger()
             androidContext(this@PrismApplication)
             modules(appModule)
+        }
+
+        val appScope: CoroutineScope = get()
+        val dispatchers: DispatcherProvider = get()
+
+        // Pre-warm Coil's SingletonImageLoader and DiskCache asynchronously on IO dispatcher
+        // so that filesystem directory creation and OkHttp setup do not block the first Compose frame.
+        appScope.launch(dispatchers.io) {
+            SingletonImageLoader.get(this@PrismApplication)
         }
 
         // MediaStore observation is started immediately; MediaStoreScanner checks
@@ -78,8 +83,10 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
                 add(coil3.network.okhttp.OkHttpNetworkFetcherFactory())
                 add(SongArtworkKeyer())
                 add(AlbumArtworkKeyer())
+                add(com.example.prism.data.artwork.MediaStoreArtworkKeyer())
                 add(AlbumArtFetcher.SongFactory())
                 add(AlbumArtFetcher.AlbumFactory())
+                add(AlbumArtFetcher.UriFactory())
             }
             .build()
     }
