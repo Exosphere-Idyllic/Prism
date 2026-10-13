@@ -33,6 +33,7 @@ val appModule = module {
     single<DispatcherProvider> { DefaultDispatcherProvider() }
     single { CoroutineScope(SupervisorJob() + get<DispatcherProvider>().default) }
     single { AppDatabase.build(get()) }
+    single { com.example.prism.data.artwork.ArtworkStorage(dispatchers = get()) }
     single<LibraryRepository> { LibraryRepositoryImpl(database = get(), dispatchers = get()) }
     single<PlaylistRepository> { PlaylistRepositoryImpl(database = get(), dispatchers = get()) }
 
