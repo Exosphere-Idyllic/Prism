@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 
+import com.example.prism.data.preferences.ScanPreferences
+
 /**
  * Orchestrates the [MediaStoreScanner] and handles scan completion.
  * Decouples the scanning logic from the main repository.
@@ -20,6 +22,7 @@ class MusicScannerManager(
     private val scope: CoroutineScope,
     private val database: AppDatabase,
     private val dispatchers: DispatcherProvider = DefaultDispatcherProvider(),
+    private val scanPreferences: ScanPreferences = ScanPreferences(app),
 ) : ScannerRepository {
 
     override val totalSongsCount: StateFlow<Int> = database.songDao()
@@ -31,6 +34,7 @@ class MusicScannerManager(
         scope = scope,
         database = database,
         dispatchers = dispatchers,
+        scanPreferences = scanPreferences,
         onScanChanged = { _, _, _ ->
             AlbumArtFetcher.clearNegativeCache()
         },

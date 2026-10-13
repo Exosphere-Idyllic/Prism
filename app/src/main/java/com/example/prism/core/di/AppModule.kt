@@ -37,12 +37,15 @@ val appModule = module {
     single<LibraryRepository> { LibraryRepositoryImpl(database = get(), dispatchers = get()) }
     single<PlaylistRepository> { PlaylistRepositoryImpl(database = get(), dispatchers = get()) }
 
+    single { com.example.prism.data.preferences.ScanPreferences(context = get()) }
+
     single<ScannerRepository> {
         MusicScannerManager(
             app = get(),
             scope = get(),
             database = get(),
             dispatchers = get(),
+            scanPreferences = get(),
         )
     }
 
