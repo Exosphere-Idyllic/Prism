@@ -71,14 +71,21 @@ interface PlaylistDao {
     suspend fun insertPlaylistSongAtEnd(playlistId: Long, songId: String)
 
     /**
-     * Atomically ensures the "Favorites" playlist exists and returns its row.
+     * Atomically ensures a playlist exists by [name] and returns its row.
      * Uses INSERT OR IGNORE + SELECT to prevent duplicate-name races.
      */
     @Transaction
-    suspend fun getOrCreateFavorites(now: Long): Playlist {
-        insert(Playlist(name = "Favorites", createdAt = now, updatedAt = now))
-        return requireNotNull(getPlaylistByName("Favorites")) {
-            "Failed to retrieve or create Favorites playlist"
+    suspend fun getOrCreatePlaylistByName(name: String, now: Long): Playlist {
+        insert(Playlist(name = name, createdAt = now, updatedAt = now))
+        return requireNotNull(getPlaylistByName(name)) {
+            "Failed to retrieve or create playlist: $name"
         }
     }
+
+    /**
+     * Atomically ensures the "Favorites" playlist exists and returns its row.
+     */
+    @Transaction
+    suspend fun getOrCreateFavorites(now: Long): Playlist =
+        getOrCreatePlaylistByName("Favorites", now)
 }

@@ -38,7 +38,10 @@ class PlaylistRepositoryImpl(
      */
     override suspend fun toggleFavorite(song: Song) = withContext(dispatchers.io) {
         database.withTransaction {
-            val playlist = playlistDao.getOrCreateFavorites(System.currentTimeMillis())
+            val playlist = playlistDao.getOrCreatePlaylistByName(
+                PlaylistRepository.FAVORITES_PLAYLIST_NAME,
+                System.currentTimeMillis(),
+            )
             val isFav = playlistDao.isSongInPlaylist(playlist.id, song.id)
             if (isFav) {
                 playlistDao.deletePlaylistSong(playlist.id, song.id)
