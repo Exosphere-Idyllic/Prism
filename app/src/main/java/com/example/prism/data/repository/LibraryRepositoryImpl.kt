@@ -4,7 +4,6 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.example.prism.core.util.DispatcherProvider
-import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.db.AppDatabase
 import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.Artist
@@ -20,6 +19,7 @@ import kotlinx.coroutines.withContext
 class LibraryRepositoryImpl(
     database: AppDatabase,
     private val dispatchers: DispatcherProvider,
+    private val onArtworkChanged: () -> Unit = {},
 ) : LibraryRepository {
 
     private val songDao = database.songDao()
@@ -60,11 +60,11 @@ class LibraryRepositoryImpl(
 
     override suspend fun updateSongArtwork(songId: String, artworkUri: String) = withContext(dispatchers.io) {
         songDao.updateCustomArtworkUri(songId, artworkUri)
-        AlbumArtFetcher.clearNegativeCache()
+        onArtworkChanged()
     }
 
     override suspend fun updateAlbumCover(albumId: Long, coverUri: String) = withContext(dispatchers.io) {
         albumDao.updateCustomCoverUri(albumId, coverUri)
-        AlbumArtFetcher.clearNegativeCache()
+        onArtworkChanged()
     }
 }

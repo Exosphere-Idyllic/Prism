@@ -2,6 +2,7 @@ package com.example.prism.core.di
 
 import com.example.prism.core.util.DefaultDispatcherProvider
 import com.example.prism.core.util.DispatcherProvider
+import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.db.AppDatabase
 import com.example.prism.data.media.MusicScannerManager
 import com.example.prism.data.repository.LibraryRepositoryImpl
@@ -34,7 +35,13 @@ val appModule = module {
     single { CoroutineScope(SupervisorJob() + get<DispatcherProvider>().default) }
     single { AppDatabase.build(get()) }
     single { com.example.prism.data.artwork.ArtworkStorage(dispatchers = get()) }
-    single<LibraryRepository> { LibraryRepositoryImpl(database = get(), dispatchers = get()) }
+    single<LibraryRepository> {
+        LibraryRepositoryImpl(
+            database = get(),
+            dispatchers = get(),
+            onArtworkChanged = { AlbumArtFetcher.clearNegativeCache() },
+        )
+    }
     single<PlaylistRepository> { PlaylistRepositoryImpl(database = get(), dispatchers = get()) }
 
     single { com.example.prism.data.preferences.ScanPreferences(context = get()) }
