@@ -117,6 +117,9 @@ class AlbumArtFetcher(
         private val retrieverSemaphore = Semaphore(3)
     }
 
+    // Note: Uses Dispatchers.IO directly instead of DispatcherProvider because Coil Fetcher
+    // instances are created by Coil's Factory system without access to the DI container.
+    // This is an intentional exception to the project's DispatcherProvider convention.
     override suspend fun fetch(): FetchResult? = withContext(Dispatchers.IO) {
         val cacheKey = negativeCacheKey(albumId, artworkUri, customArtworkUri, mediaUri, dateModified)
 
@@ -260,7 +263,7 @@ class AlbumArtFetcher(
                 response.close()
                 return null
             }
-            val bytes = response.body.bytes()
+            val bytes = response.body?.bytes() ?: return null
             bytesToSourceResult(bytes, DataSource.NETWORK)
         } catch (_: Exception) {
             null
@@ -382,6 +385,50 @@ class AlbumArtFetcher(
                 requestedSize = data.size,
                 dateModified = 0L,
             )
+        }
+    }
+
+    class UriFactory : Fetcher.Factory<android.net.Uri> {
+        override fun create(
+            data: android.net.Uri,
+            options: Options,
+            imageLoader: ImageLoader,
+        ): Fetcher? {
+            val uriStr = data.toString()
+            val isAudioAlbum = uriStr.contains("audio/albums") || uriStr.contains("audio/albumart")
+            val isAudioMedia = uriStr.contains("audio/media") ||
+                (data.authority == MediaStore.AUTHORITY && data.path?.contains("audio") == true && data.path?.contains("albums") != true)
+
+            return when {
+                isAudioAlbum -> {
+                    val albumId = try {
+                        ContentUris.parseId(data)
+                    } catch (_: Exception) {
+                        0L
+                    }
+                    if (albumId > 0L) {
+                        AlbumArtFetcher(
+                            albumId = albumId,
+                            artworkUri = uriStr,
+                            customArtworkUri = "",
+                            mediaUri = null,
+                            context = options.context,
+                            requestedSize = MASTER_ARTWORK_SIZE,
+                        )
+                    } else null
+                }
+                isAudioMedia -> {
+                    AlbumArtFetcher(
+                        albumId = 0L,
+                        artworkUri = "",
+                        customArtworkUri = "",
+                        mediaUri = uriStr,
+                        context = options.context,
+                        requestedSize = MASTER_ARTWORK_SIZE,
+                    )
+                }
+                else -> null
+            }
         }
     }
 }
