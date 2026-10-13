@@ -19,8 +19,8 @@ fuente de datos concreta (Room, DataStore), y de decidir en qué
 Implementa `LibraryRepository` delegando en `SongDao`, `AlbumDao` y
 `ArtistDao`.
 
-- `getSongsFlow(query)` construye un `Pager` de Paging 3 (`pageSize = 30`,
-  `prefetchDistance = 40`, sin placeholders) sobre
+- `getSongsFlow(query)` construye un `Pager` de Paging 3 (`pageSize = 40`,
+  `prefetchDistance = 20`, `initialLoadSize = 40`, `maxSize = 200`, sin placeholders) sobre
   `songDao.getAllSongsPaging()` o `searchSongsPaging()` según haya query o
   no — la paginación real ocurre en SQL, no en memoria.
 - `getAlbumsFlow`/`getArtistsFlow` devuelven listas completas (no paginadas:

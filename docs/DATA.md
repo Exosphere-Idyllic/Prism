@@ -56,9 +56,7 @@ derivan por agregación SQL de la tabla `songs` (`GROUP BY albumId` /
   grandes. Incluye `upsertPreservingUserFields`, una transacción Room que
   inserta canciones nuevas e ignora conflictos (`OnConflictStrategy.IGNORE`),
   y para las que ya existen actualiza solo columnas provenientes del escáner
-  sin pisar `customArtworkUri`/`customLyricsUri`. También expone consultas de
-  agregación (`getAggregatedAlbums`, `getAggregatedArtists` y sus variantes
-  incrementales `...ForIds`/`...ForNames`) usadas por el escáner.
+  sin pisar `customArtworkUri`/`customLyricsUri`.
 - **`AlbumDao`** / **`ArtistDao`** — CRUD de las tablas materializadas, con
   `syncAllFromSongs()` (resincronización completa vía SQL `INSERT ... SELECT
   ... ON CONFLICT DO UPDATE`) y `syncFromSongsForIds`/`syncFromSongsForNames`
