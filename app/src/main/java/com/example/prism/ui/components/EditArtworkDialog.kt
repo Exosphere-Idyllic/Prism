@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RestartAlt
@@ -29,9 +30,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
+import com.skydoves.landscapist.ImageOptions
+import com.skydoves.landscapist.coil3.CoilImage
+import com.skydoves.landscapist.components.rememberImageComponent
+import com.skydoves.landscapist.crossfade.CrossfadePlugin
 import com.example.prism.R
 import com.example.prism.ui.theme.*
 
@@ -126,14 +128,41 @@ fun EditArtworkDialog(
                             strokeWidth = 3.dp
                         )
                     } else if (selectedUri.isNotEmpty()) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(selectedUri)
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = stringResource(R.string.preview),
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                        CoilImage(
+                            imageModel = { selectedUri },
+                            modifier = Modifier.fillMaxSize(),
+                            imageOptions = ImageOptions(
+                                contentScale = ContentScale.Crop,
+                                contentDescription = stringResource(R.string.preview),
+                            ),
+                            component = rememberImageComponent {
+                                +CrossfadePlugin(duration = 300)
+                            },
+                            loading = {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(28.dp),
+                                        color = AppAccentSoft,
+                                        strokeWidth = 2.5.dp
+                                    )
+                                }
+                            },
+                            failure = {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.BrokenImage,
+                                        contentDescription = stringResource(R.string.preview),
+                                        tint = AppTextSecondary.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
+                            },
                         )
                     } else {
                         Icon(
