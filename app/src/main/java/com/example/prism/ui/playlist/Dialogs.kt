@@ -22,8 +22,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.example.prism.R
 import com.example.prism.data.entity.Song
-import com.example.prism.data.repository.isFavoritesPlaylist
 import com.example.prism.domain.model.PlaylistWithCount
+import com.example.prism.domain.repository.PlaylistRepository
 import com.example.prism.ui.theme.*
 
 @Composable
@@ -56,7 +56,7 @@ fun AddToPlaylistDialog(
                                 }
                                 .padding(12.dp)
                         ) {
-                            val displayName = if (isFavoritesPlaylist(playlist.name)) {
+                            val displayName = if (PlaylistRepository.isFavorites(playlist.name)) {
                                 stringResource(R.string.playlist_favorites)
                             } else {
                                 playlist.name

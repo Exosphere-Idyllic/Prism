@@ -17,7 +17,7 @@ class PlaylistRepositoryImpl(
 ) : PlaylistRepository {
 
     companion object {
-        const val FAVORITES_PLAYLIST_NAME = "Favorites"
+        const val FAVORITES_PLAYLIST_NAME = PlaylistRepository.FAVORITES_PLAYLIST_NAME
     }
 
     private val playlistDao = database.playlistDao()
@@ -26,7 +26,7 @@ class PlaylistRepositoryImpl(
         playlistDao.getAllPlaylistsWithCounts()
 
     override fun getFavoriteSongIds(): Flow<Set<String>> =
-        playlistDao.getPlaylistSongIdsFlow(FAVORITES_PLAYLIST_NAME).map { it.toSet() }
+        playlistDao.getPlaylistSongIdsFlow(PlaylistRepository.FAVORITES_PLAYLIST_NAME).map { it.toSet() }
 
     /**
      * Toggles favorite status for [song].
@@ -80,4 +80,4 @@ class PlaylistRepositoryImpl(
 }
 
 fun isFavoritesPlaylist(name: String): Boolean =
-    name.equals(PlaylistRepositoryImpl.FAVORITES_PLAYLIST_NAME, ignoreCase = true)
+    PlaylistRepository.isFavorites(name)

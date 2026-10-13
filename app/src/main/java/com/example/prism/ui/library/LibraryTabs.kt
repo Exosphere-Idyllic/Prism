@@ -25,8 +25,8 @@ import androidx.compose.ui.unit.sp
 import com.example.prism.R
 import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.Artist
-import com.example.prism.data.repository.isFavoritesPlaylist
 import com.example.prism.domain.model.PlaylistWithCount
+import com.example.prism.domain.repository.PlaylistRepository
 import com.example.prism.ui.components.AlbumArtwork
 
 import com.example.prism.ui.theme.AppAccentBg
@@ -123,7 +123,7 @@ fun PlaylistListItem(
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
-        val displayName = if (isFavoritesPlaylist(playlist.name)) {
+        val displayName = if (PlaylistRepository.isFavorites(playlist.name)) {
             stringResource(R.string.playlist_favorites)
         } else {
             playlist.name
@@ -144,7 +144,7 @@ fun PlaylistListItem(
                 fontSize = 12.sp
             )
         }
-        if (!isFavoritesPlaylist(playlist.name)) {
+        if (!PlaylistRepository.isFavorites(playlist.name)) {
             IconButton(onClick = onDelete) {
                 Icon(
                     imageVector = Icons.Default.Delete,

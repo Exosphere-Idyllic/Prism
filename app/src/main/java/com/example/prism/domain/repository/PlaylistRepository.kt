@@ -5,6 +5,13 @@ import com.example.prism.data.entity.Song
 import kotlinx.coroutines.flow.Flow
 
 interface PlaylistRepository {
+    companion object {
+        const val FAVORITES_PLAYLIST_NAME = "Favorites"
+
+        fun isFavorites(name: String): Boolean =
+            name.equals(FAVORITES_PLAYLIST_NAME, ignoreCase = true)
+    }
+
     val playlistsWithCountsFlow: Flow<List<PlaylistWithCount>>
     fun getFavoriteSongIds(): Flow<Set<String>>
     suspend fun toggleFavorite(song: Song)

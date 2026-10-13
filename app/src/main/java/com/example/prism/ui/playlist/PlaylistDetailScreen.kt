@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.prism.R
 import com.example.prism.data.entity.Song
-import com.example.prism.data.repository.isFavoritesPlaylist
+import com.example.prism.domain.repository.PlaylistRepository
 import com.example.prism.ui.components.DetailHeroHeader
 import com.example.prism.ui.components.DetailSongList
 import com.example.prism.ui.components.DetailTopBar
@@ -88,7 +88,7 @@ fun PlaylistDetailContent(
     onRemoveSong: (Song) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val displayName = if (isFavoritesPlaylist(playlistName)) {
+    val displayName = if (PlaylistRepository.isFavorites(playlistName)) {
         stringResource(R.string.playlist_favorites)
     } else {
         playlistName
