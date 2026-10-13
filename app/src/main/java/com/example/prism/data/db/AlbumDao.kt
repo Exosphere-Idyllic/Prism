@@ -16,11 +16,6 @@ interface AlbumDao {
     @Query("UPDATE albums SET customCoverUri = :customCoverUri WHERE id = :id")
     suspend fun updateCustomCoverUri(id: Long, customCoverUri: String)
 
-    @Query("DELETE FROM albums")
-    suspend fun deleteAll()
-
-    @Query("DELETE FROM albums WHERE id IN (:ids)")
-    suspend fun deleteByIds(ids: List<Long>)
 
     @Query("DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT albumId FROM songs)")
     suspend fun deleteOrphans()

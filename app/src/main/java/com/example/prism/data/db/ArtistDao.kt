@@ -13,11 +13,6 @@ interface ArtistDao {
     @Query("SELECT * FROM artists WHERE name LIKE :query ORDER BY name ASC")
     fun searchArtists(query: String): Flow<List<Artist>>
 
-    @Query("DELETE FROM artists")
-    suspend fun deleteAll()
-
-    @Query("DELETE FROM artists WHERE name IN (:names)")
-    suspend fun deleteByNames(names: List<String>)
 
     @Query("DELETE FROM artists WHERE name NOT IN (SELECT DISTINCT artist FROM songs)")
     suspend fun deleteOrphans()
