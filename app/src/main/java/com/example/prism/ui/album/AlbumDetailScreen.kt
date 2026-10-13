@@ -22,7 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.prism.R
 import com.example.prism.core.util.resolveArtistName
 import com.example.prism.data.entity.Song
-import com.example.prism.ui.components.AlbumArtwork
+import com.example.prism.ui.components.AlbumHeroArtwork
 import com.example.prism.ui.components.DetailHeroHeader
 import com.example.prism.ui.components.DetailSongList
 import com.example.prism.ui.components.DetailTopBar
@@ -156,7 +156,7 @@ fun AlbumDetailContent(
                             .background(AppSurface)
                             .clickable { onEditCover() }
                     ) {
-                        AlbumArtwork(
+                        AlbumHeroArtwork(
                             albumId = albumId,
                             coverUri = coverPath.ifEmpty { songs.firstOrNull()?.artworkUri ?: "" },
                             customCoverUri = customCoverUri.ifEmpty { songs.firstOrNull()?.customArtworkUri ?: "" },

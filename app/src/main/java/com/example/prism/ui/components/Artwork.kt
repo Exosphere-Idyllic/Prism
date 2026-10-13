@@ -200,3 +200,42 @@ fun PlayerSongArtwork(
     }
 }
 
+/**
+ * Displays hero artwork for an album in [com.example.prism.ui.album.AlbumDetailScreen] using Landscapist [PrismCoilImage].
+ *
+ * Provides smooth [CrossfadePlugin] transition, deterministic fallback placeholder, and high-quality scaling.
+ */
+@Composable
+fun AlbumHeroArtwork(
+    albumId: Long,
+    coverUri: String,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    customCoverUri: String = "",
+    size: Int = 256,
+) {
+    val context = LocalContext.current
+    val imageRequest = remember(albumId, coverUri, customCoverUri) {
+        ImageRequest.Builder(context)
+            .data(
+                AlbumArtworkParams(
+                    albumId = albumId,
+                    coverUri = coverUri,
+                    customCoverUri = customCoverUri,
+                    size = AlbumArtFetcher.MASTER_ARTWORK_SIZE,
+                )
+            )
+            .size(size)
+            .build()
+    }
+
+    PrismCoilImage(
+        imageModel = { imageRequest },
+        contentDescription = contentDescription,
+        modifier = modifier,
+        placeholderRes = defaultCoverRes(albumId),
+        errorRes = defaultCoverRes(albumId),
+        crossfadeDuration = 350,
+    )
+}
+
