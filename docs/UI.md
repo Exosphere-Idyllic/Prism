@@ -54,12 +54,32 @@ tipografía de la app. Sin lógica de negocio.
 
 | Archivo | Contenido |
 |---|---|
-| `Artwork.kt` | `SongArtwork`/`AlbumArtwork` — envuelven `CoilImage` (Landscapist) sobre el `ImageLoader` global. Si no hay artwork, eligen de forma determinista uno de 5 drawables por defecto en función del hash del ID (misma canción/álbum siempre muestra el mismo placeholder). |
+| `LandscapistImage.kt` | `PrismCoilImage` — wrapper centralizado de Landscapist `CoilImage` (Coil 3), integrando `CrossfadePlugin`, `PlaceholderPlugin` (loading/failure) y extracción de paleta vía `PalettePlugin` (`com.kmpalette`). Diseñado exclusivamente para vistas destacadas (player, hero de álbum y previews). |
+| `Artwork.kt` | `PlayerSongArtwork`/`AlbumHeroArtwork` (impulsados por `PrismCoilImage` con Landscapist) y `SongArtwork`/`AlbumArtwork` (impulsados por Coil 3 `AsyncImage` puro). Si no hay artwork, eligen deterministamente uno de 5 drawables por defecto en función del hash del ID. |
 | `CommonComponents.kt` | `SearchBar`, `SongListShimmer` (skeleton de carga con `Modifier.shimmer()` que anima solo en fase de dibujo, sin recomposición por frame), `PermissionRequest`, `EmptyLibrary`, `NoSearchResults`. |
 | `DetailComponents.kt` | `DetailTopBar`, `DetailHeroHeader`, `DetailSongList` — piezas reutilizadas por las tres pantallas de detalle (álbum, artista, playlist). |
 | `EditArtworkDialog.kt` | Diálogo para cambiar o restablecer el artwork personalizado de una canción/álbum, con selección de imagen vía Android Photo Picker (`PickVisualMedia`). |
 | `MiniPlayer.kt` | Reproductor compacto persistente en la parte inferior de la biblioteca, con su propia barra de progreso (`MiniPlayerProgressBar`). |
 | `SongList.kt` | `SongList`/`SongListItem` — el ítem de lista reutilizado en biblioteca, álbum, artista y playlist. |
+
+### Estrategia Híbrida de Renderizado de Imágenes (Landscapist + Coil 3)
+
+Para garantizar un rendimiento estricto a 60/120 Hz en dispositivos de gama media y baja, la aplicación adopta una estrategia híbrida dividida por contexto de uso:
+
+#### 1. Componentes migrados a Landscapist (`PrismCoilImage`)
+- **`PlayerSongArtwork` (`PlayerScreen`)**: Renderizado en alta resolución (`512px`), animación `CrossfadePlugin(400)` y extracción reactiva de paleta vía `PalettePlugin` para teñir el fondo de pantalla con `Animatable` en fase de dibujo.
+- **`AlbumHeroArtwork` (`AlbumDetailScreen`)**: Imagen hero de cabecera (`256px`) con `CrossfadePlugin(350)` y estados de placeholder deterministas.
+
+#### 2. Componentes que DEBEN mantenerse en Coil 3 puro (Prohibido migrar a Landscapist)
+| Componente / Mecanismo | Archivo | Razón técnica |
+|---|---|---|
+| `SongArtwork` (ítems de lista) | `Artwork.kt`, `SongList.kt`, `DetailComponents.kt` | `AsyncImage` no realiza subcomposición interna. Landscapist introduce capas de recomposición adicionales que provocan pérdida de frames (*jank*) durante el desplazamiento rápido (*fling scrolling*). |
+| `AlbumArtwork` (grid de álbumes) | `Artwork.kt`, `LibraryTabs.kt` | Idéntica razón: preserva fluidez en grids y listas extensas. |
+| `MiniPlayer` artwork | `MiniPlayer.kt` | Componente persistente en pantalla de alta frecuencia de interacción; debe ser lo más ligero posible en memoria y CPU. |
+| Prefetch por ventana visible | `SongList.kt`, `DetailComponents.kt` | Invoca directamente `imageLoader.enqueue(ImageRequest)` con debounce sobre la posición del viewport. Landscapist no provee APIs de precalentamiento de caché antes del layout. |
+| `CoilBitmapLoader` | `player/CoilBitmapLoader.kt` | Requerido por Media3 (`MediaSession`) para generar `Bitmap` de software síncrono/asíncrono para las notificaciones del sistema de Android. Landscapist es solo UI de Compose y no puede participar en servicios de segundo plano. |
+| Pipeline de bajo nivel (`Keyers` y `Fetchers`) | `data/artwork/*` | `AlbumArtFetcher`, `SongArtworkKeyer`, `AlbumArtworkKeyer`, `MediaStoreArtworkKeyer` constituyen la infraestructura compartida que alimenta tanto a Coil 3 puro como a Landscapist y Media3 a través de `SingletonImageLoader`. |
+
 
 ## Biblioteca (`ui/library/`)
 
