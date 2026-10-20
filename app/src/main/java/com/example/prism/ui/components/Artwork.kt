@@ -7,9 +7,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.painterResource
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
@@ -22,6 +23,7 @@ import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.AlbumArtworkParams
 import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
+import com.example.prism.ui.theme.AppSurface3
 
 /**
  * Drawable resource IDs for the 5 default cover art variations.
@@ -45,10 +47,41 @@ internal fun defaultCoverRes(stableId: Any): Int {
     return DEFAULT_COVERS[index]
 }
 
+internal fun defaultCoverIndex(stableId: Any): Int {
+    return (stableId.hashCode() and 0x7FFFFFFF) % DEFAULT_COVERS.size
+}
+
+@Composable
+fun rememberDefaultCoverPainters(): List<Painter> {
+    return listOf(
+        painterResource(R.drawable.default_cover_1),
+        painterResource(R.drawable.default_cover_2),
+        painterResource(R.drawable.default_cover_3),
+        painterResource(R.drawable.default_cover_4),
+        painterResource(R.drawable.default_cover_5),
+    )
+}
+
+/**
+ * Static [ColorPainter] used as the loading placeholder for song/album artwork in lists.
+ *
+ * Using a [ColorPainter] here instead of [painterResource] has two important advantages:
+ * 1. No XML parsing or VectorDrawable tree construction on the UI thread during fast scroll.
+ * 2. Zero per-composition allocations — the same instance is reused by every list cell.
+ *
+ * The default cover drawables ([DEFAULT_COVERS]) are only shown when artwork definitively
+ * fails to load (error / fallback), not during the transient loading state.
+ */
+private val ArtworkLoadingPlaceholder = ColorPainter(AppSurface3)
+
 /**
  * Displays artwork for a [Song].
- * Uses highly optimized [AsyncImage] to avoid subcomposition overhead and frame-drops.
- * When [onPaletteLoaded] is provided, extracts dynamic theme colors asynchronously via [androidx.palette.graphics.Palette].
+ *
+ * Loading state: a neutral flat [AppSurface3] background — zero overhead, no XML parse.
+ * Error / Fallback (song has no artwork): deterministic default cover drawable.
+ *
+ * When [onPaletteLoaded] is provided, extracts dynamic theme colors asynchronously
+ * via [androidx.palette.graphics.Palette].
  */
 @Composable
 fun SongArtwork(
@@ -57,6 +90,7 @@ fun SongArtwork(
     modifier: Modifier = Modifier,
     size: Int = 160,
     crossfade: Boolean = false,
+    defaultCoverPainters: List<Painter>? = null,
     onPaletteLoaded: ((androidx.palette.graphics.Palette) -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -64,6 +98,11 @@ fun SongArtwork(
     if (song != null) {
         val imageLoader = remember(context) { SingletonImageLoader.get(context) }
         val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
+        val defaultCoverPainter = if (defaultCoverPainters != null) {
+            defaultCoverPainters[defaultCoverIndex(song.id)]
+        } else {
+            painterResource(defaultCoverRes(song.id))
+        }
         val imageRequest = remember(song.id, song.artworkUri, song.customArtworkUri, song.dateModified, currentOnPaletteLoaded != null) {
             ImageRequest.Builder(context)
                 .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
@@ -82,9 +121,11 @@ fun SongArtwork(
             imageLoader = imageLoader,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
-            placeholder = painterResource(defaultCoverRes(song.id)),
-            error = painterResource(defaultCoverRes(song.id)),
-            fallback = painterResource(defaultCoverRes(song.id)),
+            // Loading: neutral surface color — no XML parsing, no default cover flash
+            placeholder = ArtworkLoadingPlaceholder,
+            // Error / Fallback: song has no artwork at all → show default cover
+            error = defaultCoverPainter,
+            fallback = defaultCoverPainter,
             onSuccess = { state ->
                 currentOnPaletteLoaded?.let { callback ->
                     val bitmap = state.result.image.toBitmap()
@@ -113,8 +154,8 @@ fun SongArtwork(
 /**
  * Displays artwork for an album using lightweight [AsyncImage].
  *
- * When no artwork is available, a deterministic default cover drawable is shown
- * based on the album's ID.
+ * Loading state: neutral [AppSurface3] flat color — no XML parsing overhead.
+ * Error / Fallback (album has no artwork): deterministic default cover drawable.
  */
 @Composable
 fun AlbumArtwork(
@@ -125,9 +166,15 @@ fun AlbumArtwork(
     customCoverUri: String = "",
     size: Int = 256,
     crossfade: Boolean = false,
+    defaultCoverPainters: List<Painter>? = null,
 ) {
     val context = LocalContext.current
     val imageLoader = remember(context) { SingletonImageLoader.get(context) }
+    val defaultCoverPainter = if (defaultCoverPainters != null) {
+        defaultCoverPainters[defaultCoverIndex(albumId)]
+    } else {
+        painterResource(defaultCoverRes(albumId))
+    }
 
     val imageRequest = remember(albumId, coverUri, customCoverUri) {
         ImageRequest.Builder(context)
@@ -149,9 +196,11 @@ fun AlbumArtwork(
         imageLoader = imageLoader,
         contentDescription = contentDescription,
         contentScale = ContentScale.Crop,
-        placeholder = painterResource(defaultCoverRes(albumId)),
-        error = painterResource(defaultCoverRes(albumId)),
-        fallback = painterResource(defaultCoverRes(albumId)),
+        // Loading: neutral surface color — no default cover flash while image loads
+        placeholder = ArtworkLoadingPlaceholder,
+        // Error / Fallback: album has no artwork → show default cover
+        error = defaultCoverPainter,
+        fallback = defaultCoverPainter,
         modifier = modifier,
     )
 }
@@ -160,7 +209,9 @@ fun AlbumArtwork(
  * Displays artwork for the main player screen using Landscapist [PrismCoilImage].
  *
  * Configured specifically for high-res display (512px), smooth CrossfadePlugin transitions,
+ * ShimmerPlugin as loading placeholder (animated shimmer — visually rich in a full-screen context),
  * and automatic palette extraction via PalettePlugin to drive dynamic background theming.
+ * The default cover is only shown if the song has no artwork (error state).
  */
 @Composable
 fun PlayerSongArtwork(
@@ -184,7 +235,7 @@ fun PlayerSongArtwork(
             imageModel = { imageRequest },
             contentDescription = contentDescription,
             modifier = modifier,
-            placeholderRes = defaultCoverRes(song.id),
+            // No placeholderRes — ShimmerPlugin handles loading state inside PrismCoilImage
             errorRes = defaultCoverRes(song.id),
             crossfadeDuration = 400,
             onPaletteLoaded = onPaletteLoaded,
@@ -201,9 +252,11 @@ fun PlayerSongArtwork(
 }
 
 /**
- * Displays hero artwork for an album in [com.example.prism.ui.album.AlbumDetailScreen] using Landscapist [PrismCoilImage].
+ * Displays hero artwork for an album in [com.example.prism.ui.album.AlbumDetailScreen]
+ * using Landscapist [PrismCoilImage].
  *
- * Provides smooth [CrossfadePlugin] transition, deterministic fallback placeholder, and high-quality scaling.
+ * ShimmerPlugin handles the loading state with an animated shimmer effect.
+ * The default cover is only shown if the album has no artwork (error state).
  */
 @Composable
 fun AlbumHeroArtwork(
@@ -233,9 +286,8 @@ fun AlbumHeroArtwork(
         imageModel = { imageRequest },
         contentDescription = contentDescription,
         modifier = modifier,
-        placeholderRes = defaultCoverRes(albumId),
+        // No placeholderRes — ShimmerPlugin handles loading state inside PrismCoilImage
         errorRes = defaultCoverRes(albumId),
         crossfadeDuration = 350,
     )
 }
-

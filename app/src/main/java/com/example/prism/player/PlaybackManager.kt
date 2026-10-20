@@ -64,8 +64,8 @@ class PlaybackManagerImpl(
          * Window size for MediaItems sent to ExoPlayer via Binder IPC.
          * Enforces safety against [android.os.TransactionTooLargeException] (1 MB Binder cap).
          */
-        private const val INITIAL_WINDOW = 51
-        private const val EXPAND_THRESHOLD = 35
+        private const val INITIAL_WINDOW = 31
+        private const val EXPAND_THRESHOLD = 20
     }
 
     private val _currentSong = MutableStateFlow<Song?>(null)
@@ -124,7 +124,6 @@ class PlaybackManagerImpl(
             _repeatModeState.value = restoredRepeat
             mediaController?.repeatMode = restoredRepeat
         }
-        initializeController()
     }
 
     @Synchronized
@@ -282,11 +281,14 @@ class PlaybackManagerImpl(
     }
 
     private fun warmUpArtworkCache(song: Song) {
+        AlbumArtFetcher.clearNegativeCacheFor(song.albumId, song.mediaUri)
+
         val imageLoader = SingletonImageLoader.get(app)
         val request = ImageRequest.Builder(app)
             .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
             .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
             .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
             .build()
         imageLoader.enqueue(request)
 
@@ -303,6 +305,7 @@ class PlaybackManagerImpl(
                 .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
                 .allowHardware(false) // Must be software-rendered for notifications
                 .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
                 .build()
             imageLoader.enqueue(uriRequest)
         }

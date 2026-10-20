@@ -391,6 +391,7 @@ private fun AlbumsTabContent(
     modifier: Modifier = Modifier,
 ) {
     val isAlbumsLoading = isLoading && albums.isEmpty()
+    val defaultCoverPainters = com.example.prism.ui.components.rememberDefaultCoverPainters()
     if (isAlbumsLoading) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = AppAccent)
@@ -406,8 +407,15 @@ private fun AlbumsTabContent(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = modifier.fillMaxSize(),
         ) {
-            items(albums, key = { it.id }) { album ->
-                AlbumGridItem(album = album) {
+            items(
+                items = albums,
+                key = { it.id },
+                contentType = { "album" }
+            ) { album ->
+                AlbumGridItem(
+                    album = album,
+                    defaultCoverPainters = defaultCoverPainters,
+                ) {
                     onNavigateToAlbum(album.id, album.albumName, album.coverPath, album.customCoverUri)
                 }
             }
@@ -451,7 +459,11 @@ private fun PlaylistsTabContent(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
-                items(playlists, key = { it.id }) { playlist ->
+                items(
+                    items = playlists,
+                    key = { it.id },
+                    contentType = { "playlist" }
+                ) { playlist ->
                     PlaylistListItem(
                         playlist = playlist,
                         onClick = { onNavigateToPlaylist(playlist.id, playlist.name) },
@@ -485,7 +497,11 @@ private fun ArtistsTabContent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = modifier.fillMaxSize()
         ) {
-            items(artists, key = { it.name }) { artist ->
+            items(
+                items = artists,
+                key = { it.name },
+                contentType = { "artist" }
+            ) { artist ->
                 ArtistListItem(artist = artist) { onNavigateToArtist(artist.name) }
             }
         }

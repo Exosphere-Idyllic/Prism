@@ -50,9 +50,9 @@ class LibraryRepositoryImpl(
         return Pager(
             config = PagingConfig(
                 pageSize = 40,
-                prefetchDistance = 20,
                 initialLoadSize = 40,
-                maxSize = 200,
+                prefetchDistance = 25,
+                maxSize = PagingConfig.MAX_SIZE_UNBOUNDED,
                 enablePlaceholders = false,
             ),
         ) {

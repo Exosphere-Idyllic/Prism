@@ -10,10 +10,12 @@ import android.provider.MediaStore
 import android.util.Size
 import androidx.core.net.toUri
 import coil3.ImageLoader
+import coil3.asImage
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import java.io.ByteArrayOutputStream
@@ -103,6 +105,23 @@ class AlbumArtFetcher(
             noArtworkCache.clear()
         }
 
+        /**
+         * Clears negative cache entries for a specific song or album when modified.
+         */
+        fun clearNegativeCacheFor(albumId: Long, mediaUri: String?) {
+            if (!mediaUri.isNullOrEmpty()) {
+                val prefix = "song_${albumId}_${mediaUri.hashCode()}"
+                synchronized(noArtworkCache) {
+                    noArtworkCache.removeIf { it.startsWith(prefix) }
+                }
+            } else {
+                val prefix = "album_${albumId}_"
+                synchronized(noArtworkCache) {
+                    noArtworkCache.removeIf { it.startsWith(prefix) }
+                }
+            }
+        }
+
         val okHttpClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
                 .connectTimeout(10L, TimeUnit.SECONDS)
@@ -155,7 +174,13 @@ class AlbumArtFetcher(
 
         // Strategy 2: System thumbnail by song MediaStore URI (API 29+)
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
-            fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { return bitmapToSourceResult(it) }
+            fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { bitmap ->
+                return ImageFetchResult(
+                    image = bitmap.asImage(),
+                    isSampled = false,
+                    dataSource = DataSource.DISK,
+                )
+            }
         }
 
         // Strategy 3: Embedded ID3 artwork via MediaMetadataRetriever
@@ -196,7 +221,13 @@ class AlbumArtFetcher(
         val songUri = querySongUriForAlbum(albumId) ?: return null
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            fetchSystemThumbnail(songUri, signal)?.let { return bitmapToSourceResult(it) }
+            fetchSystemThumbnail(songUri, signal)?.let { bitmap ->
+                return ImageFetchResult(
+                    image = bitmap.asImage(),
+                    isSampled = false,
+                    dataSource = DataSource.DISK,
+                )
+            }
         }
 
         return extractEmbeddedArtwork(songUri.toString())

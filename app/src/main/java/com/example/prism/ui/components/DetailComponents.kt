@@ -130,21 +130,20 @@ fun DetailSongList(
 ) {
     val context = LocalContext.current
     val imageLoader = remember(context) { SingletonImageLoader.get(context) }
+    val defaultCoverPainters = rememberDefaultCoverPainters()
 
     // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling.
-    // snapshotFlow + distinctUntilChanged ensures prefetch triggers only when the visible
-    // boundary actually moves forward, avoiding redundant enqueue calls on micro-scrolls.
     LaunchedEffect(listState, imageLoader) {
         var lastPrefetchedUpTo = -1
-        snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-        }
+        snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
-            .collect { lastVisibleIndex ->
-                if (lastVisibleIndex < 0) return@collect
-                val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.size - 1)
+            .collect { firstIndex ->
+                if (firstIndex < 0) return@collect
+                val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(8)
+                val prefetchTarget = (firstIndex + visibleCount + 6).coerceAtMost(songs.size - 1)
                 if (prefetchTarget <= lastPrefetchedUpTo) return@collect
-                for (i in (lastVisibleIndex + 1)..prefetchTarget) {
+                val start = (firstIndex + visibleCount).coerceAtMost(prefetchTarget)
+                for (i in start..prefetchTarget) {
                     val nextSong = songs.getOrNull(i) ?: continue
                     val prefetchRequest = ImageRequest.Builder(context)
                         .data(SongArtworkParams(song = nextSong, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
@@ -162,7 +161,11 @@ fun DetailSongList(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        items(songs, key = { it.id }) { song ->
+        items(
+            items = songs,
+            key = { it.id },
+            contentType = { "song" }
+        ) { song ->
             val isSelected = song.id == currentSongId
             val isCurrentPlaying = isSelected && isPlaying
             val isFavorite = favoriteSongIds.contains(song.id)
@@ -174,6 +177,7 @@ fun DetailSongList(
                 isFavorite = isFavorite,
                 onSongSelected = onSongSelected,
                 onFavoriteToggle = onFavoriteToggle,
+                defaultCoverPainters = defaultCoverPainters,
                 customTrailingAction = trailingAction
             )
         }

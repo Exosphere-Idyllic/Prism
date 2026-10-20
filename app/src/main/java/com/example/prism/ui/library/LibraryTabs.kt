@@ -40,6 +40,7 @@ import com.example.prism.ui.theme.AppTrackBg
 @Composable
 fun AlbumGridItem(
     album: Album,
+    defaultCoverPainters: List<androidx.compose.ui.graphics.painter.Painter>? = null,
     onClick: () -> Unit,
 ) {
     Column(
@@ -63,6 +64,7 @@ fun AlbumGridItem(
                 customCoverUri = album.customCoverUri,
                 contentDescription = null,
                 size = 256,
+                defaultCoverPainters = defaultCoverPainters,
                 modifier = Modifier.fillMaxSize()
             )
         }

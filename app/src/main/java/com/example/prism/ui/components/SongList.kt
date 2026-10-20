@@ -53,7 +53,10 @@ import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.artwork.SongArtworkParams
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun SongList(
@@ -70,22 +73,24 @@ fun SongList(
 ) {
     val context = LocalContext.current
     val imageLoader = remember(context) { SingletonImageLoader.get(context) }
+    val defaultCoverPainters = rememberDefaultCoverPainters()
 
     // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling.
-    // snapshotFlow + debounce ensures we only prefetch after the user pauses
-    // scrolling (100ms idle), not on every individual scroll pixel. The lastPrefetchedUpTo
-    // guard prevents re-enqueueing a range that was already requested.
+    // Observes firstVisibleItemIndex instead of layoutInfo to avoid evaluating
+    // snapshot state on every subpixel frame of scrolling.
+    @OptIn(FlowPreview::class)
     LaunchedEffect(listState, imageLoader) {
         var lastPrefetchedUpTo = -1
-        snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-        }
+        snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
-            .collect { lastVisibleIndex ->
-                if (lastVisibleIndex < 0) return@collect
-                val prefetchTarget = (lastVisibleIndex + 6).coerceAtMost(songs.itemCount - 1)
+            .debounce(80.milliseconds)
+            .collect { firstIndex ->
+                if (firstIndex < 0) return@collect
+                val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(8)
+                val prefetchTarget = (firstIndex + visibleCount + 6).coerceAtMost(songs.itemCount - 1)
                 if (prefetchTarget <= lastPrefetchedUpTo) return@collect
-                for (i in (lastVisibleIndex + 1)..prefetchTarget) {
+                val start = (firstIndex + visibleCount).coerceAtMost(prefetchTarget)
+                for (i in start..prefetchTarget) {
                     val nextSong = songs.peek(i) ?: continue
                     val prefetchRequest = ImageRequest.Builder(context)
                         .data(SongArtworkParams(song = nextSong, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
@@ -122,6 +127,7 @@ fun SongList(
                     onFavoriteToggle = onFavoriteToggle,
                     onAddToPlaylist = onAddToPlaylist,
                     onEditArtwork = onEditArtwork,
+                    defaultCoverPainters = defaultCoverPainters,
                 )
             }
         }
@@ -138,6 +144,7 @@ fun SongListItem(
     onFavoriteToggle: (Song) -> Unit,
     onAddToPlaylist: ((Song) -> Unit)? = null,
     onEditArtwork: ((Song) -> Unit)? = null,
+    defaultCoverPainters: List<androidx.compose.ui.graphics.painter.Painter>? = null,
     customTrailingAction: (@Composable (Song) -> Unit)? = null,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -157,6 +164,7 @@ fun SongListItem(
             contentDescription = stringResource(R.string.cd_album_art),
             size = 160,
             crossfade = false,
+            defaultCoverPainters = defaultCoverPainters,
             modifier = Modifier
                 .size(50.dp)
                 .clip(RoundedCornerShape(8.dp))

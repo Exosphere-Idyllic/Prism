@@ -20,6 +20,11 @@ interface SongDao {
     @Query("SELECT COUNT(*) FROM songs")
     fun getSongCountFlow(): Flow<Int>
 
+    /** Synchronous (blocking) count used at startup on the IO dispatcher to decide
+     *  whether to defer the first MediaStore scan. */
+    @Query("SELECT COUNT(*) FROM songs")
+    fun getSongCountSync(): Int
+
     @Query("SELECT * FROM songs ORDER BY title ASC")
     fun getAllSongsPaging(): PagingSource<Int, Song>
 

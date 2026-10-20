@@ -16,14 +16,27 @@ import com.skydoves.landscapist.components.rememberImageComponent
 import com.skydoves.landscapist.crossfade.CrossfadePlugin
 import com.skydoves.landscapist.palette.PalettePlugin
 import com.skydoves.landscapist.placeholder.placeholder.PlaceholderPlugin
+import com.skydoves.landscapist.placeholder.shimmer.Shimmer
+import com.skydoves.landscapist.placeholder.shimmer.ShimmerPlugin
+import com.example.prism.ui.theme.AppSurface2
+import com.example.prism.ui.theme.AppSurface3
 
 /**
  * Landscapist-powered image composable for use in detail/player screens.
- * Wraps CoilImage with consistent styling, crossfade animation, placeholder/error plugins,
- * and optional palette color extraction.
  *
- * Designed to avoid subcomposition overhead in fast-scrolling lists by only being adopted
- * in hero, player, and dialog preview contexts.
+ * ## Loading state
+ * Shows an animated [ShimmerPlugin] with colors matching the app's dark palette
+ * ([AppSurface2] base, [AppSurface3] highlight). This replaces the previous behaviour
+ * where the default cover drawable was displayed momentarily while the real artwork
+ * was being decoded — the shimmer is visually neutral and signals "loading" clearly.
+ *
+ * ## Error state
+ * Only when artwork is definitively unavailable ([errorRes] != null) does the fallback
+ * default-cover drawable appear via [PlaceholderPlugin.Failure].
+ *
+ * Designed to avoid subcomposition overhead in fast-scrolling lists; adopt this composable
+ * only in hero, player, and detail-screen contexts where a richer loading animation
+ * is appropriate. For list rows use [SongArtwork] / [AlbumArtwork] with Coil [AsyncImage].
  */
 @Composable
 fun PrismCoilImage(
@@ -40,51 +53,122 @@ fun PrismCoilImage(
     val currentOnPaletteLoaded by rememberUpdatedState(onPaletteLoaded)
     val currentOnColorExtracted by rememberUpdatedState(onPrimaryColorExtracted)
 
-    CoilImage(
-        imageModel = imageModel,
-        modifier = modifier,
-        imageOptions = ImageOptions(
-            contentScale = contentScale,
-            contentDescription = contentDescription,
-        ),
-        component = rememberImageComponent {
-            if (crossfadeDuration > 0) {
-                +CrossfadePlugin(duration = crossfadeDuration)
-            }
-            if (placeholderRes != null) {
-                +PlaceholderPlugin.Loading(
-                    source = painterResource(placeholderRes)
-                )
-            }
-            if (errorRes != null) {
-                +PlaceholderPlugin.Failure(
-                    source = painterResource(errorRes)
-                )
-            }
-            if (currentOnPaletteLoaded != null || currentOnColorExtracted != null) {
-                +PalettePlugin { palette ->
-                    currentOnPaletteLoaded?.invoke(palette)
-                    currentOnColorExtracted?.let { callback ->
-                        val swatch = palette.dominantSwatch
-                            ?: palette.vibrantSwatch
-                            ?: palette.darkVibrantSwatch
-                            ?: palette.lightVibrantSwatch
-                        swatch?.rgb?.let { rgb ->
-                            callback(Color(rgb))
+    val modelValue = imageModel()
+    if (modelValue is coil3.request.ImageRequest) {
+        CoilImage(
+            imageRequest = { modelValue },
+            modifier = modifier,
+            imageOptions = ImageOptions(
+                contentScale = contentScale,
+                contentDescription = contentDescription,
+            ),
+            component = rememberImageComponent {
+                if (crossfadeDuration > 0) {
+                    +CrossfadePlugin(duration = crossfadeDuration)
+                }
+
+                if (placeholderRes != null) {
+                    +PlaceholderPlugin.Loading(
+                        source = painterResource(placeholderRes)
+                    )
+                } else {
+                    +ShimmerPlugin(
+                        shimmer = Shimmer.Flash(
+                            baseColor = AppSurface2,
+                            highlightColor = AppSurface3,
+                        )
+                    )
+                }
+
+                if (errorRes != null) {
+                    +PlaceholderPlugin.Failure(
+                        source = painterResource(errorRes)
+                    )
+                }
+
+                if (currentOnPaletteLoaded != null || currentOnColorExtracted != null) {
+                    +PalettePlugin { palette ->
+                        currentOnPaletteLoaded?.invoke(palette)
+                        currentOnColorExtracted?.let { callback ->
+                            val swatch = palette.dominantSwatch
+                                ?: palette.vibrantSwatch
+                                ?: palette.darkVibrantSwatch
+                                ?: palette.lightVibrantSwatch
+                            swatch?.rgb?.let { rgb ->
+                                callback(Color(rgb))
+                            }
                         }
                     }
                 }
-            }
-        },
-        failure = {
-            if (errorRes != null) {
-                Image(
-                    painter = painterResource(errorRes),
-                    contentDescription = contentDescription,
-                    contentScale = contentScale,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        },
-    )
+            },
+            failure = {
+                if (errorRes != null) {
+                    Image(
+                        painter = painterResource(errorRes),
+                        contentDescription = contentDescription,
+                        contentScale = contentScale,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            },
+        )
+    } else {
+        CoilImage(
+            imageModel = imageModel,
+            modifier = modifier,
+            imageOptions = ImageOptions(
+                contentScale = contentScale,
+                contentDescription = contentDescription,
+            ),
+            component = rememberImageComponent {
+                if (crossfadeDuration > 0) {
+                    +CrossfadePlugin(duration = crossfadeDuration)
+                }
+
+                if (placeholderRes != null) {
+                    +PlaceholderPlugin.Loading(
+                        source = painterResource(placeholderRes)
+                    )
+                } else {
+                    +ShimmerPlugin(
+                        shimmer = Shimmer.Flash(
+                            baseColor = AppSurface2,
+                            highlightColor = AppSurface3,
+                        )
+                    )
+                }
+
+                if (errorRes != null) {
+                    +PlaceholderPlugin.Failure(
+                        source = painterResource(errorRes)
+                    )
+                }
+
+                if (currentOnPaletteLoaded != null || currentOnColorExtracted != null) {
+                    +PalettePlugin { palette ->
+                        currentOnPaletteLoaded?.invoke(palette)
+                        currentOnColorExtracted?.let { callback ->
+                            val swatch = palette.dominantSwatch
+                                ?: palette.vibrantSwatch
+                                ?: palette.darkVibrantSwatch
+                                ?: palette.lightVibrantSwatch
+                            swatch?.rgb?.let { rgb ->
+                                callback(Color(rgb))
+                            }
+                        }
+                    }
+                }
+            },
+            failure = {
+                if (errorRes != null) {
+                    Image(
+                        painter = painterResource(errorRes),
+                        contentDescription = contentDescription,
+                        contentScale = contentScale,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            },
+        )
+    }
 }

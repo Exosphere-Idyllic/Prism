@@ -32,7 +32,9 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
         }
 
         startKoin {
-            androidLogger()
+            if (BuildConfig.DEBUG) {
+                androidLogger(org.koin.core.logger.Level.ERROR)
+            }
             androidContext(this@PrismApplication)
             modules(appModule)
         }
@@ -46,9 +48,11 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             SingletonImageLoader.get(this@PrismApplication)
         }
 
-        // MediaStore observation is started immediately; MediaStoreScanner checks
-        // audio permissions internally before registering ContentObserver or querying.
-        appScope.launch {
+        // Defer MediaStore observation slightly (300 ms) on the IO dispatcher so that
+        // the initial Compose frame, layout measurement, and initial Room paging query
+        // execute unhindered without thread/binder contention during the critical cold start window.
+        appScope.launch(dispatchers.io) {
+            kotlinx.coroutines.delay(300)
             val scannerRepository: ScannerRepository = get()
             scannerRepository.startObserving()
         }
@@ -57,11 +61,6 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
 
     override fun newImageLoader(context: Context): ImageLoader {
         return ImageLoader.Builder(context)
-            .apply {
-                if (BuildConfig.DEBUG) {
-                    logger(coil3.util.DebugLogger())
-                }
-            }
             .precision(coil3.size.Precision.INEXACT)
             .memoryCache {
                 MemoryCache.Builder()

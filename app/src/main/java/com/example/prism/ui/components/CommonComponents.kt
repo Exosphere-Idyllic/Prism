@@ -29,38 +29,70 @@ import androidx.compose.ui.unit.sp
 import com.example.prism.R
 import com.example.prism.ui.theme.*
 
-import androidx.compose.ui.composed
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.runtime.withFrameMillis
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+private val ShimmerColors = listOf(
+    Color.White.copy(alpha = 0.03f),
+    Color.White.copy(alpha = 0.12f),
+    Color.White.copy(alpha = 0.03f),
+)
 
 /**
- * Modifier that draws a shimmer gradient during the draw phase, completely skipping
- * composition-phase recomposition on each animation frame.
+ * Modifier that draws an animated shimmer gradient via [Modifier.Node].
+ *
+ * Unlike [Modifier.composed], this completely avoids sub-composition overhead,
+ * allocating zero composition scopes per list item and running the animation loop
+ * purely in synchronization with the draw phase.
  */
-fun Modifier.shimmer(): Modifier = composed {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateAnim by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmerTranslation"
-    )
-    val shimmerColors = remember {
-        listOf(
-            Color.White.copy(alpha = 0.03f),
-            Color.White.copy(alpha = 0.12f),
-            Color.White.copy(alpha = 0.03f),
-        )
+fun Modifier.shimmer(): Modifier = this then ShimmerModifierElement
+
+private data object ShimmerModifierElement : ModifierNodeElement<ShimmerNode>() {
+    override fun create(): ShimmerNode = ShimmerNode()
+    override fun update(node: ShimmerNode) {
+        // Stateless — nothing to update
     }
-    drawBehind {
+}
+
+private class ShimmerNode : Modifier.Node(), DrawModifierNode {
+    private var translateX = 0f
+    private var animJob: Job? = null
+
+    override fun onAttach() {
+        animJob = coroutineScope.launch {
+            val durationMs = 1200L
+            while (isActive) {
+                val startTime = withFrameMillis { it }
+                while (isActive) {
+                    val currentMillis = withFrameMillis { it }
+                    val elapsed = currentMillis - startTime
+                    translateX = ((elapsed % durationMs).toFloat() / durationMs) * 1000f
+                    invalidateDraw()
+                    if (elapsed >= durationMs) break
+                }
+            }
+        }
+    }
+
+    override fun onDetach() {
+        animJob?.cancel()
+        animJob = null
+    }
+
+    override fun ContentDrawScope.draw() {
         val brush = Brush.linearGradient(
-            colors = shimmerColors,
+            colors = ShimmerColors,
             start = Offset.Zero,
-            end = Offset(x = translateAnim, y = translateAnim)
+            end = Offset(x = translateX, y = translateX),
         )
         drawRect(brush)
+        drawContent()
     }
 }
 

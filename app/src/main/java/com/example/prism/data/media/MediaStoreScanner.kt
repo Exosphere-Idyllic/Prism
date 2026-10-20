@@ -35,7 +35,7 @@ interface MediaStoreScanner {
 
 class MediaStoreScannerImpl(
     private val app: Application,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val database: AppDatabase,
     private val dispatchers: DispatcherProvider = DefaultDispatcherProvider(),
     private val scanPreferences: ScanPreferences = ScanPreferences(app),
@@ -131,7 +131,20 @@ class MediaStoreScannerImpl(
             }
         }
         if (hasStarted.compareAndSet(false, true)) {
-            scanRequests.trySend(Unit)
+            // Delay the first automatic scan by 800 ms when the database already has songs.
+            // This lets the initial PagingData query (Room) and Coil disk-cache reads for
+            // the first visible frame complete without competing with MediaStore I/O.
+            // When the DB is empty (first install / full-scan), trigger immediately so the
+            // loading spinner shows and data appears as fast as possible.
+            val hasSongsAlready = database.songDao().getSongCountSync() > 0
+            if (hasSongsAlready) {
+                scope.launch(dispatchers.io) {
+                    kotlinx.coroutines.delay(800)
+                    scanRequests.trySend(Unit)
+                }
+            } else {
+                scanRequests.trySend(Unit)
+            }
         }
     }
 
