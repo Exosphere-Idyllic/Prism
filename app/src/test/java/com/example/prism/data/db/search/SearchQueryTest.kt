@@ -45,6 +45,10 @@ class SearchQueryTest {
     // --- Opción C (minLength = 1): comportamiento Spotify-style ---
 
     @Test
+    fun `one char with minLength 1`() =
+        assertEquals("a*", SearchQuery.toFtsMatch("a", minLength = 1))
+
+    @Test
     fun `single char with minLength 1 adds wildcard`() =
         assertEquals("r*", SearchQuery.toFtsMatch("r", minLength = 1))
 

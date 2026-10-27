@@ -94,9 +94,11 @@ de suministrarla a la cláusula `MATCH`:
 - **Wildcard de prefijo:** A cada término resultante se le añade el operador de prefijo `*`
   (ej. `"rock ballads"` → `"rock* ballads*"`).
 - **Multi-palabra (AND implícito):** Múltiples términos separados por espacio exigen que todos
-  coincidan en el documento.
-- **Longitud mínima:** Si la consulta tiene menos de 2 caracteres (`minLength = 2`), se descarta
-  (devuelve `null`) y el repositorio emite la colección completa sin filtrar.
+  coincidan en el documento. SQLite FTS4 no soporta el operador `OR`: en consultas como `"rock OR pop"`,
+  el término `OR` se indexa y busca como un término literal más (`rock* AND OR* AND pop*`).
+- **Longitud mínima:** Con `minLength = 1` en el repositorio, búsquedas de un carácter (ej. `"a"` → `"a*"`)
+  acotan los resultados por prefijo (comportamiento Spotify-style). Una query vacía devuelve `null` y
+  el repositorio emite la colección completa.
 
 ### Comportamiento y limitaciones conocidas
 1. **Prefix-only (no substring):**
