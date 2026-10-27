@@ -10,9 +10,6 @@ interface ArtistDao {
     @Query("SELECT * FROM artists ORDER BY name ASC")
     fun getAllArtists(): Flow<List<Artist>>
 
-    @Query("SELECT * FROM artists WHERE name LIKE :query ORDER BY name ASC")
-    fun searchArtists(query: String): Flow<List<Artist>>
-
     @Query("""
         SELECT * FROM artists
         WHERE rowid IN (SELECT docid FROM artists_fts WHERE artists_fts MATCH :query)

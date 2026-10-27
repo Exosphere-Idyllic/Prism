@@ -3,7 +3,6 @@ package com.example.prism.data.repository
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
-import com.example.prism.BuildConfig
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.db.AppDatabase
 import com.example.prism.data.db.search.SearchQuery
@@ -58,38 +57,31 @@ class LibraryRepositoryImpl(
                 enablePlaceholders = false,
             ),
         ) {
-            when {
-                query.isEmpty() -> songDao.getAllSongsPaging()
-
-                BuildConfig.USE_FTS_SEARCH -> {
-                    val ftsQuery = SearchQuery.toFtsMatch(query)
-                    if (ftsQuery != null) songDao.searchSongsFts(ftsQuery)
-                    else songDao.getAllSongsPaging() // query < 2 chars -> sin filtro
-                }
-
-                else -> songDao.searchSongsPaging("%$query%")
+            val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
+            if (ftsQuery != null) {
+                songDao.searchSongsFts(ftsQuery)
+            } else {
+                songDao.getAllSongsPaging()
             }
         }.flow
     }
 
-    override fun getAlbumsFlow(query: String): Flow<List<Album>> = when {
-        query.isEmpty() -> albumDao.getAllAlbums()
-        BuildConfig.USE_FTS_SEARCH -> {
-            val ftsQuery = SearchQuery.toFtsMatch(query)
-            if (ftsQuery != null) albumDao.searchAlbumsFts(ftsQuery)
-            else albumDao.getAllAlbums()
+    override fun getAlbumsFlow(query: String): Flow<List<Album>> {
+        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
+        return if (ftsQuery != null) {
+            albumDao.searchAlbumsFts(ftsQuery)
+        } else {
+            albumDao.getAllAlbums()
         }
-        else -> albumDao.searchAlbums("%$query%")
     }
 
-    override fun getArtistsFlow(query: String): Flow<List<Artist>> = when {
-        query.isEmpty() -> artistDao.getAllArtists()
-        BuildConfig.USE_FTS_SEARCH -> {
-            val ftsQuery = SearchQuery.toFtsMatch(query)
-            if (ftsQuery != null) artistDao.searchArtistsFts(ftsQuery)
-            else artistDao.getAllArtists()
+    override fun getArtistsFlow(query: String): Flow<List<Artist>> {
+        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
+        return if (ftsQuery != null) {
+            artistDao.searchArtistsFts(ftsQuery)
+        } else {
+            artistDao.getAllArtists()
         }
-        else -> artistDao.searchArtists("%$query%")
     }
 
     override fun getSongsByAlbum(id: Long): Flow<List<Song>> = songDao.getSongsByAlbum(id)

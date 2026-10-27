@@ -28,9 +28,6 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY title ASC")
     fun getAllSongsPaging(): PagingSource<Int, Song>
 
-    @Query("SELECT * FROM songs WHERE title LIKE :query OR artist LIKE :query OR album LIKE :query ORDER BY title ASC")
-    fun searchSongsPaging(query: String): PagingSource<Int, Song>
-
     @Query("""
         SELECT * FROM songs
         WHERE rowid IN (SELECT docid FROM songs_fts WHERE songs_fts MATCH :query)

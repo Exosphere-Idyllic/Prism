@@ -63,15 +63,17 @@ class SearchBenchmarkTest {
             placeholdersEnabled = false,
         )
 
+        val likeSql = "SELECT * FROM songs WHERE title LIKE '%$query%' OR artist LIKE '%$query%' OR album LIKE '%$query%' ORDER BY title ASC LIMIT 40"
+
         // Warmup
         repeat(10) {
-            db.songDao().searchSongsPaging("%$query%").load(pagingParams)
+            db.openHelper.readableDatabase.query(likeSql).use { cursor -> while (cursor.moveToNext()) {} }
             db.songDao().searchSongsFts("rock*").load(pagingParams)
         }
 
         val likeTime = measureNanoTime {
             repeat(100) {
-                db.songDao().searchSongsPaging("%$query%").load(pagingParams)
+                db.openHelper.readableDatabase.query(likeSql).use { cursor -> while (cursor.moveToNext()) {} }
             }
         } / 100
 

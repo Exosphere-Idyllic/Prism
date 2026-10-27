@@ -10,9 +10,6 @@ interface AlbumDao {
     @Query("SELECT * FROM albums ORDER BY albumName ASC")
     fun getAllAlbums(): Flow<List<Album>>
 
-    @Query("SELECT * FROM albums WHERE albumName LIKE :query OR artist LIKE :query ORDER BY albumName ASC")
-    fun searchAlbums(query: String): Flow<List<Album>>
-
     @Query("""
         SELECT * FROM albums
         WHERE rowid IN (SELECT docid FROM albums_fts WHERE albums_fts MATCH :query)
