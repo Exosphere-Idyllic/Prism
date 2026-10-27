@@ -72,11 +72,25 @@ class LibraryRepositoryImpl(
         }.flow
     }
 
-    override fun getAlbumsFlow(query: String): Flow<List<Album>> =
-        if (query.isEmpty()) albumDao.getAllAlbums() else albumDao.searchAlbums("%$query%")
+    override fun getAlbumsFlow(query: String): Flow<List<Album>> = when {
+        query.isEmpty() -> albumDao.getAllAlbums()
+        BuildConfig.USE_FTS_SEARCH -> {
+            val ftsQuery = SearchQuery.toFtsMatch(query)
+            if (ftsQuery != null) albumDao.searchAlbumsFts(ftsQuery)
+            else albumDao.getAllAlbums()
+        }
+        else -> albumDao.searchAlbums("%$query%")
+    }
 
-    override fun getArtistsFlow(query: String): Flow<List<Artist>> =
-        if (query.isEmpty()) artistDao.getAllArtists() else artistDao.searchArtists("%$query%")
+    override fun getArtistsFlow(query: String): Flow<List<Artist>> = when {
+        query.isEmpty() -> artistDao.getAllArtists()
+        BuildConfig.USE_FTS_SEARCH -> {
+            val ftsQuery = SearchQuery.toFtsMatch(query)
+            if (ftsQuery != null) artistDao.searchArtistsFts(ftsQuery)
+            else artistDao.getAllArtists()
+        }
+        else -> artistDao.searchArtists("%$query%")
+    }
 
     override fun getSongsByAlbum(id: Long): Flow<List<Song>> = songDao.getSongsByAlbum(id)
     override fun getSongsByArtist(name: String): Flow<List<Song>> = songDao.getSongsByArtist(name)
