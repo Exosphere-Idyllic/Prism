@@ -13,6 +13,13 @@ interface AlbumDao {
     @Query("SELECT * FROM albums WHERE albumName LIKE :query OR artist LIKE :query ORDER BY albumName ASC")
     fun searchAlbums(query: String): Flow<List<Album>>
 
+    @Query("""
+        SELECT * FROM albums
+        WHERE rowid IN (SELECT docid FROM albums_fts WHERE albums_fts MATCH :query)
+        ORDER BY albumName ASC
+    """)
+    fun searchAlbumsFts(query: String): Flow<List<Album>>
+
     @Query("UPDATE albums SET customCoverUri = :customCoverUri WHERE id = :id")
     suspend fun updateCustomCoverUri(id: Long, customCoverUri: String)
 

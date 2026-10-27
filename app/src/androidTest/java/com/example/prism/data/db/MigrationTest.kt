@@ -75,4 +75,24 @@ class MigrationTest {
             }
         assertEquals(1, count)
     }
+
+    @Test
+    fun migrate3To4_populatesAlbumsFts() {
+        helper.createDatabase(TEST_DB, 3).apply {
+            execSQL("""
+                INSERT INTO albums (id, albumName, artist, coverPath, songCount, customCoverUri)
+                VALUES (1, 'Good Girl Gone Bad', 'Rihanna', '', 10, '')
+            """)
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 4, true, AppDatabase.MIGRATION_3_4)
+
+        val count = db.query("SELECT COUNT(*) FROM albums_fts WHERE albums_fts MATCH 'rih*'")
+            .use {
+                it.moveToFirst()
+                it.getInt(0)
+            }
+        assertEquals(1, count)
+    }
 }
