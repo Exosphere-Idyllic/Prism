@@ -21,6 +21,7 @@ import kotlin.math.pow
  * - Soft-knee saturation limiter to prevent digital clipping
  * - Lock-free, thread-safe configuration updates via [AtomicReference]
  * - Instantaneous bypass when disabled without audio sink reconfiguration
+ * - Active-filter compaction: only bands with non-identity coefficients are iterated
  */
 @OptIn(UnstableApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
@@ -32,7 +33,12 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     private val configRef = AtomicReference(EqualizerConfig())
+
+    // Pool de filtros pre-allocated: filters[0..MAX_BANDS-1].
+    // activeFilters[0..activeBandCount-1] contiene solo los filtros con coeficientes no-BYPASS,
+    // compactados sin huecos. queueInput itera sobre activeFilters, no sobre filters.
     private val filters = Array(MAX_BANDS) { BiquadFilter(maxChannels = MAX_CHANNELS) }
+    private val activeFilters = arrayOfNulls<BiquadFilter>(MAX_BANDS)
 
     @Volatile private var isEqEnabled: Boolean = false
     @Volatile private var preampLinear: Float = 1.0f
@@ -80,27 +86,40 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         if (sampleRate <= 0) return
         val config = configRef.get() ?: return
         val bands = config.bands
-        val count = bands.size.coerceAtMost(filters.size)
+        var active = 0
 
-        for (i in 0 until count) {
-            val band = bands[i]
-            if (band.enabled) {
-                filters[i].coefficients = BiquadCoefficients.calculate(
-                    type = band.type,
-                    frequencyHz = band.frequencyHz,
-                    sampleRate = sampleRate,
-                    gainDb = band.gainDb,
-                    q = band.q,
-                )
-            } else {
-                filters[i].coefficients = BiquadCoefficients.BYPASS
-            }
+        for (band in bands) {
+            if (active >= MAX_BANDS) break
+            if (!band.enabled) continue
+
+            val coeffs = BiquadCoefficients.calculate(
+                type = band.type,
+                frequencyHz = band.frequencyHz,
+                sampleRate = sampleRate,
+                gainDb = band.gainDb,
+                q = band.q,
+            )
+            // calculate() returns BYPASS singleton when:
+            //  - BELL/SHELF with |gain| < 0.005 dB (perceptually identity)
+            //  - a0 < 1e-9 (numerically unstable denominator)
+            //  - sampleRate <= 0 (already guarded above)
+            // Skipping BYPASS bands here is what gives "Flat" preset its ~100% CPU reduction.
+            if (coeffs === BiquadCoefficients.BYPASS) continue
+
+            val f = filters[active]
+            f.coefficients = coeffs
+            activeFilters[active] = f
+            active++
         }
 
-        for (i in count until filters.size) {
-            filters[i].coefficients = BiquadCoefficients.BYPASS
-        }
-        activeBandCount = count
+        // Clear trailing slots so stale references don't linger
+        for (i in active until MAX_BANDS) activeFilters[i] = null
+
+        // Also reset any filter slots that are no longer active, to avoid stale state
+        // if they get reactivated later without an explicit flush.
+        for (i in active until MAX_BANDS) filters[i].reset()
+
+        activeBandCount = active
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -109,8 +128,10 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             val remaining = inputBuffer.remaining()
             if (remaining == 0) return
 
-            // If equalizer is disabled, bypass processing with a direct byte copy (zero latency, zero CPU overhead)
-            if (!isEqEnabled) {
+            // Bypass path 1: EQ disabled by the user.
+            // Bypass path 2: EQ enabled but all bands are effectively neutral (all gain ≈ 0 dB).
+            //   With preset "Flat", activeBandCount == 0 → bit-perfect copy, zero DSP work.
+            if (!isEqEnabled || activeBandCount == 0) {
                 val output = replaceOutputBuffer(remaining)
                 output.put(inputBuffer)
                 output.flip()
@@ -128,12 +149,12 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             val useLimiter = limiterEnabled
 
             // Snapshot coefficients once per buffer (one @Volatile read per active band, not per sample).
-            // At 16 Hz buffer rate × 10 bands = 160 volatile reads/sec — negligible.
+            // At ~16 Hz buffer rate × bandCount = ~160 volatile reads/sec — negligible.
             // Previously: 1 volatile read + 5 float comparisons per sample × 96 000 samples/sec × 10 bands
             //             = 960 000 volatile reads/sec + 4.8 M float comparisons/sec.
             val snapshotCoeffs = arrayOfNulls<BiquadCoefficients>(bandCount)
             for (b in 0 until bandCount) {
-                snapshotCoeffs[b] = filters[b].coefficients
+                snapshotCoeffs[b] = activeFilters[b]!!.coefficients
             }
 
             if (encoding == C.ENCODING_PCM_16BIT) {
@@ -147,9 +168,9 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                     // Apply preamp
                     sample *= preamp
 
-                    // Apply cascaded biquad filters
+                    // Apply cascaded biquad filters (only active, non-BYPASS bands)
                     for (b in 0 until bandCount) {
-                        sample = filters[b].processSample(sample, channel, snapshotCoeffs[b]!!)
+                        sample = activeFilters[b]!!.processSample(sample, channel, snapshotCoeffs[b]!!)
                     }
 
                     // Apply soft-knee limiter if enabled
@@ -175,9 +196,9 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                     // Apply preamp
                     sample *= preamp
 
-                    // Apply cascaded biquad filters
+                    // Apply cascaded biquad filters (only active, non-BYPASS bands)
                     for (b in 0 until bandCount) {
-                        sample = filters[b].processSample(sample, channel, snapshotCoeffs[b]!!)
+                        sample = activeFilters[b]!!.processSample(sample, channel, snapshotCoeffs[b]!!)
                     }
 
                     // Apply soft-knee limiter if enabled
@@ -199,14 +220,20 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onFlush() {
+        // Reset only active filters (the ones actually processing audio).
+        // activeFilters[0..activeBandCount-1] are the same instances as in filters[],
+        // just compacted. Resetting via activeFilters is sufficient and cheaper.
         for (i in 0 until activeBandCount) {
-            filters[i].reset()
+            activeFilters[i]?.reset()
         }
     }
 
     override fun onReset() {
         for (i in filters.indices) {
             filters[i].reset()
+        }
+        for (i in activeFilters.indices) {
+            activeFilters[i] = null
         }
         activeBandCount = 0
     }
