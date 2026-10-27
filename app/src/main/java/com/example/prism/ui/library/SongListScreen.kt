@@ -2,6 +2,7 @@ package com.example.prism.ui.library
 
 import android.Manifest
 import android.os.Build
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -367,6 +368,13 @@ private fun SongsTabContent(
             NoSearchResults(query = searchQuery, modifier = modifier.fillMaxSize())
         }
     } else {
+        // Signal to the system that meaningful content is now visible.
+        // This unblocks am start -W TotalTime, which otherwise waits until the LazyColumn
+        // draws real items rather than the shimmer placeholder.
+        val activity = LocalContext.current as? ComponentActivity
+        LaunchedEffect(Unit) {
+            activity?.reportFullyDrawn()
+        }
         SongList(
             songs = lazySongs,
             currentSong = currentSong,
