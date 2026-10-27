@@ -144,7 +144,7 @@ data class BiquadCoefficients(
      * frequency response curve without running an FFT analyzer.
      */
     fun magnitudeDb(freqHz: Float, sampleRate: Int): Float {
-        if (this == BYPASS || sampleRate <= 0) return 0f
+        if (this === BYPASS || sampleRate <= 0) return 0f
 
         val omega = (2.0 * PI * freqHz / sampleRate)
         val cosOmega = cos(omega)
