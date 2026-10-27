@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.AlbumFts
 import com.example.prism.data.entity.Artist
+import com.example.prism.data.entity.ArtistFts
 import com.example.prism.data.entity.Playlist
 import com.example.prism.data.entity.PlaylistSong
 import com.example.prism.data.entity.Song
@@ -24,8 +25,9 @@ import com.example.prism.data.entity.SongFts
         PlaylistSong::class,
         SongFts::class,
         AlbumFts::class,
+        ArtistFts::class,
     ],
-    version = 4,
+    version = 5,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
     ],
@@ -146,13 +148,65 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 1. Tabla virtual FTS4 con external content
+                db.execSQL("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS `artists_fts`
+                    USING FTS4(
+                        `name` TEXT NOT NULL,
+                        content=`artists`,
+                        tokenize=unicode61
+                    )
+                """.trimIndent())
+
+                // 2. Triggers de sincronización
+                db.execSQL("""
+                    CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_artists_fts_BEFORE_UPDATE`
+                    BEFORE UPDATE ON `artists`
+                    BEGIN
+                        DELETE FROM `artists_fts` WHERE `docid` = OLD.`rowid`;
+                    END
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_artists_fts_BEFORE_DELETE`
+                    BEFORE DELETE ON `artists`
+                    BEGIN
+                        DELETE FROM `artists_fts` WHERE `docid` = OLD.`rowid`;
+                    END
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_artists_fts_AFTER_UPDATE`
+                    AFTER UPDATE ON `artists`
+                    BEGIN
+                        INSERT INTO `artists_fts`(`docid`, `name`)
+                        VALUES (NEW.`rowid`, NEW.`name`);
+                    END
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_artists_fts_AFTER_INSERT`
+                    AFTER INSERT ON `artists`
+                    BEGIN
+                        INSERT INTO `artists_fts`(`docid`, `name`)
+                        VALUES (NEW.`rowid`, NEW.`name`);
+                    END
+                """.trimIndent())
+
+                // 3. Rebuild
+                db.execSQL("INSERT INTO `artists_fts`(`artists_fts`) VALUES ('rebuild')")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "music_database",
             )
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .addCallback(
                     object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {

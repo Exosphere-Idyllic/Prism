@@ -95,4 +95,24 @@ class MigrationTest {
             }
         assertEquals(1, count)
     }
+
+    @Test
+    fun migrate4To5_populatesArtistsFts() {
+        helper.createDatabase(TEST_DB, 4).apply {
+            execSQL("""
+                INSERT INTO artists (name, songCount, albumCount)
+                VALUES ('Rihanna', 10, 1)
+            """)
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 5, true, AppDatabase.MIGRATION_4_5)
+
+        val count = db.query("SELECT COUNT(*) FROM artists_fts WHERE artists_fts MATCH 'rih*'")
+            .use {
+                it.moveToFirst()
+                it.getInt(0)
+            }
+        assertEquals(1, count)
+    }
 }
