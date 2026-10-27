@@ -1,5 +1,6 @@
 package com.example.prism
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,6 +15,7 @@ import com.example.prism.core.util.StartupMetrics
 import com.example.prism.navigation.MainNavigation
 import com.example.prism.ui.theme.PrismTheme
 import org.koin.compose.KoinContext
+import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,5 +43,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        Timber.d("onNewIntent received: %s", intent.action)
     }
 }
