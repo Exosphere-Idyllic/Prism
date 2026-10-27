@@ -127,6 +127,15 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             val preamp = preampLinear
             val useLimiter = limiterEnabled
 
+            // Snapshot coefficients once per buffer (one @Volatile read per active band, not per sample).
+            // At 16 Hz buffer rate × 10 bands = 160 volatile reads/sec — negligible.
+            // Previously: 1 volatile read + 5 float comparisons per sample × 96 000 samples/sec × 10 bands
+            //             = 960 000 volatile reads/sec + 4.8 M float comparisons/sec.
+            val snapshotCoeffs = arrayOfNulls<BiquadCoefficients>(bandCount)
+            for (b in 0 until bandCount) {
+                snapshotCoeffs[b] = filters[b].coefficients
+            }
+
             if (encoding == C.ENCODING_PCM_16BIT) {
                 val sampleCount = remaining / 2
                 var channel = 0
@@ -140,7 +149,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
 
                     // Apply cascaded biquad filters
                     for (b in 0 until bandCount) {
-                        sample = filters[b].processSample(sample, channel)
+                        sample = filters[b].processSample(sample, channel, snapshotCoeffs[b]!!)
                     }
 
                     // Apply soft-knee limiter if enabled
@@ -168,7 +177,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
 
                     // Apply cascaded biquad filters
                     for (b in 0 until bandCount) {
-                        sample = filters[b].processSample(sample, channel)
+                        sample = filters[b].processSample(sample, channel, snapshotCoeffs[b]!!)
                     }
 
                     // Apply soft-knee limiter if enabled

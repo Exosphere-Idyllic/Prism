@@ -11,6 +11,12 @@ package com.example.prism.player.effects
  * Maintains independent delay state registers (d1, d2) per audio channel.
  * Designed for low latency, high numerical stability in single-precision float,
  * and zero allocations during sample processing.
+ *
+ * ## Threading model
+ * [coefficients] is `@Volatile` to guarantee visibility between the UI thread (writer)
+ * and the audio thread (reader). The caller **must** read [coefficients] once per buffer
+ * and pass the snapshot to [processSample]; reading it once per sample would cost
+ * ~960 000 volatile reads/sec at 48 kHz stereo with 10 bands.
  */
 class BiquadFilter(
     @Volatile var coefficients: BiquadCoefficients = BiquadCoefficients.BYPASS,
@@ -22,14 +28,17 @@ class BiquadFilter(
     /**
      * Processes a single audio sample for the given channel.
      *
-     * @param sample The input sample x[n].
-     * @param channel The channel index (0 for Left/Mono, 1 for Right, etc.).
+     * @param sample  Input sample x[n].
+     * @param channel Channel index (0 = Left/Mono, 1 = Right, etc.).
+     * @param coeffs  Coefficients pre-snapshotted by the caller once per buffer.
+     *                The caller must read [coefficients] once at buffer start and pass
+     *                the same instance here for every sample in the buffer.
+     *                No BYPASS check is performed here: the caller ([EqualizerAudioProcessor])
+     *                compacts active filters and guarantees this method is only called
+     *                for non-BYPASS bands.
      * @return The filtered sample y[n].
      */
-    fun processSample(sample: Float, channel: Int): Float {
-        val coeffs = coefficients
-        if (coeffs == BiquadCoefficients.BYPASS) return sample
-
+    fun processSample(sample: Float, channel: Int, coeffs: BiquadCoefficients): Float {
         val ch = if (channel in d1.indices) channel else 0
         val y = coeffs.b0 * sample + d1[ch]
         d1[ch] = coeffs.b1 * sample - coeffs.a1 * y + d2[ch]
