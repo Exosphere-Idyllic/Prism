@@ -42,6 +42,10 @@ android {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
     }
+
+    sourceSets {
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
+    }
 }
 
 kotlin {
@@ -122,6 +126,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   ksp(libs.androidx.room.compiler)
   implementation(libs.androidx.room.paging)
+  androidTestImplementation(libs.androidx.room.testing)
 
   // Paging 3
   implementation(libs.androidx.paging.runtime)
