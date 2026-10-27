@@ -60,7 +60,7 @@ val appModule = module {
 
     single { PlaybackPreferences(context = get()) }
 
-    factory { ProgressTracker(dispatchers = get(), scope = get()) }
+    single { ProgressTracker(dispatchers = get(), scope = get()) }
 
     single {
         PlaybackManagerImpl(

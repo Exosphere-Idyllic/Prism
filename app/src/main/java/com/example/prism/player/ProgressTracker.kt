@@ -15,6 +15,17 @@ import kotlin.time.Duration.Companion.milliseconds
  * Tracks playback progress and position polling.
  * Follows the Single Responsibility Principle (SRP) by isolating progress polling,
  * jitter suppression, and UI subscription awareness from the playback lifecycle.
+ *
+ * ## Threading model
+ * - [attachController], [syncFromController], [onPlayingChanged], [onDurationChanged],
+ *   [onPositionDiscontinuity], [onSeek] are called from the main thread (MediaController listener).
+ * - [release] must be called from the main thread (or the owning scope's thread).
+ * - [progressState] is a [StateFlow] and can be collected from any thread.
+ *
+ * ## Lifecycle
+ * The internal subscription-watcher job started in [init] is cancelled in [release]
+ * via [collectJob]. Without this, the coroutine would leak after the owning component
+ * is destroyed (e.g. after MediaController disconnects permanently).
  */
 class ProgressTracker(
     private val dispatchers: DispatcherProvider,
@@ -33,10 +44,13 @@ class ProgressTracker(
     private var lastSeekTimestamp = 0L
 
     private var progressJob: Job? = null
+    private var collectJob: Job? = null
 
     init {
-        // Suspend/resume progress polling based on active UI subscribers to save battery
-        scope.launch(dispatchers.main) {
+        // Suspend/resume progress polling based on active UI subscribers to save battery.
+        // collectJob is stored so it can be cancelled in release() — without this, the
+        // coroutine would leak after the owning component is destroyed.
+        collectJob = scope.launch(dispatchers.main) {
             _progressState.subscriptionCount.collect {
                 evaluateProgressPolling()
             }
@@ -124,6 +138,8 @@ class ProgressTracker(
 
     fun release() {
         stopProgressUpdate()
+        collectJob?.cancel()
+        collectJob = null
         mediaController = null
         isPlaying = false
     }
