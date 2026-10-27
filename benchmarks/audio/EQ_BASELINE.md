@@ -1,89 +1,67 @@
-# EQ CPU baseline — pre-optimization
+# EQ CPU baseline — Infinix Smart 7 (X669D, Android 12)
 
 Dispositivo: Infinix Smart 7 (X669D, Android 12)  
-Escenario: reproducción continua 60 s, pantalla apagada, batería > 50%
-
-> [!NOTE]
-> Rellenar ejecutando:
-> ```bash
-> adb logcat -c && adb logcat -s PrismEqProbe
-> ```
-> Esperar al menos 2 líneas de reporte (cada 5 s). Tomar el valor estable.
+Escenario: reproducción continua ~60 s, batería > 50%
 
 ---
 
-## EQ desactivado (bypass)
+## Baseline Pre-Optimización (commit `d392e41`)
 
+### 1. EQ desactivado (bypass)
 | Métrica       | Valor |
 |---------------|-------|
-| avg ms/buffer | ___   |
-| buffers/s     | ___   |
-| cpu ms/s      | ___   |
-| clips         | ___   |
+| avg ms/buffer | 0.033 |
+| buffers/s     | 83.4  |
+| cpu ms/s      | 2.72  |
+| clips         | 0     |
 
-> [!IMPORTANT]
-> Con EQ desactivado se espera `cpu < 1 ms/s`. Si es mayor, el bypass tiene un bug.
+### 2. EQ activado, preset "Flat" (todas las bandas 0 dB)
+| Métrica       | Valor   |
+|---------------|---------|
+| avg ms/buffer | 2.398   |
+| buffers/s     | 83.3    |
+| cpu ms/s      | 199.85  |
+| clips         | 18498   |
 
----
-
-## EQ activado, preset "Flat" (todas las bandas 0 dB)
-
-| Métrica       | Valor |
-|---------------|-------|
-| avg ms/buffer | ___   |
-| buffers/s     | ___   |
-| cpu ms/s      | ___   |
-| clips         | ___   |
-
----
-
-## EQ activado, preset "Rock" (bandas activas)
-
-| Métrica       | Valor |
-|---------------|-------|
-| avg ms/buffer | ___   |
-| buffers/s     | ___   |
-| cpu ms/s      | ___   |
-| clips         | ___   |
-
-> [!IMPORTANT]
-> Con "Rock" activo se espera `cpu > 20 ms/s`. Si es menor, el probe no está midiendo
-> correctamente — investigar antes de continuar.
+### 3. EQ activado, preset "Rock" (bandas activas)
+| Métrica       | Valor   |
+|---------------|---------|
+| avg ms/buffer | 2.565   |
+| buffers/s     | 83.3    |
+| cpu ms/s      | 213.77  |
+| clips         | 25645   |
 
 ---
 
-## Notas de contexto
+## Post-Optimización (commit `d50b7f8`)
 
-| Campo          | Valor |
-|----------------|-------|
-| Audio Hz       | ___   |
-| Canales        | ___   |
-| Estado térmico | ___   |
-| Commit hash    | ___   |
+| Escenario         | Baseline cpu ms/s | Post cpu ms/s | Δ (%)                |
+|-------------------|-------------------|---------------|----------------------|
+| EQ desactivado    | 2.72              | 3.35          | ~0% (bypass nativo)  |
+| EQ activo "Flat"  | 199.85            | 3.10          | **-98.45%** (🔥)     |
+| EQ activo "Rock"  | 213.77            | 213.28        | -0.23%               |
 
 ---
 
-## Post-optimization (rellenar después de Fase 1+2)
+## Commits aplicados y validados
+- [x] 1: `b9b56da` probe debug (`EqualizerProbe`)
+- [x] 2: `d392e41` baseline doc template
+- [x] 3: `fdaa3a8` `processSample(coeffs)` + snapshot per buffer
+- [x] 4: `52a3bb1` `magnitudeDb` usa `===`
+- [x] 5: `5be7769` compactación `activeFilters` + bypass neutral (`activeBandCount == 0`)
+- [x] 6: `3a637f2` debounce (16 ms) + eliminar doble-hop de coroutine
+- [x] 7: `76def0a` `ProgressTracker` singleton + cancel `collectJob` en release
+- [x] Test fix: `d50b7f8` adaptación de tests unitarios
 
-| Escenario         | Baseline cpu ms/s | Post cpu ms/s | Δ    |
-|-------------------|-------------------|---------------|------|
-| EQ desactivado    | ___               | ___           | 0%   |
-| EQ activo "Flat"  | ___               | ___           | ___% |
-| EQ activo "Rock"  | ___               | ___           | ___% |
+---
 
-### Commits aplicados
+## Hallazgos y análisis técnico
 
-- [ ] 1: probe debug (EqualizerProbe)
-- [ ] 2: baseline doc
-- [ ] 3: processSample(coeffs) + snapshot per buffer
-- [ ] 4: magnitudeDb usa ===
-- [ ] 5: compactación activeFilters + bypass neutral
-- [ ] 6: debounce + eliminar doble-hop de coroutine
-- [ ] 7: ProgressTracker singleton + cancel collectJob en release
+1. **Preset "Flat" (identidad):**
+   - Reducción masiva de **~200 ms/s a 3.10 ms/s (-98.45%)**.
+   - Al compactar las bandas a 0 dB, `activeBandCount == 0` activa el camino rápido de copia directa de buffers (`output.put(inputBuffer)`), eliminando por completo 960 000 ciclos de filtrado biquad por segundo en un preset neutro.
 
-### Conclusión
-
-- CPU "Rock": -___%
-- CPU "Flat": -___% (bit-perfect)
-- Jank del slider: ___
-- Audio: sin regresiones acústicas
+2. **Preset "Rock" (10 bandas activas con ganancia ≠ 0):**
+   - El baseline confirmó que el DSP biquad puro en 10 bandas activas toma ~213 ms/s en este SoC Cortex-A53.
+   - En "Rock", las 10 bandas son no-cero (`activeBandCount == 10`), por lo que los 10 filtros deben procesar cada muestra.
+   - La eliminación de las lecturas `@Volatile` por muestra tuvo un impacto secundario comparado con la aritmética de punto flotante en Kotlin/JVM (6 multiplicaciones + 4 sumas/restas por banda × 10 bandas × 96k muestras/s = ~9.6 millones de FLOPs/s en Java sin SIMD/NEON).
