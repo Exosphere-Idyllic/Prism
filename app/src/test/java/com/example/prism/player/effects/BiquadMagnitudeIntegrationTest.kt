@@ -37,7 +37,7 @@ class BiquadMagnitudeIntegrationTest {
 
         for (n in 0 until sampleCount) {
             val sample = sin(2.0 * PI * freqHz / sampleRate * n).toFloat()
-            val out = filter.processSample(sample, channel = 0)
+            val out = filter.processSample(sample, channel = 0, coeffs = coeffs)
 
             if (n >= warmupSamples) {
                 inputSumSq += (sample * sample).toDouble()

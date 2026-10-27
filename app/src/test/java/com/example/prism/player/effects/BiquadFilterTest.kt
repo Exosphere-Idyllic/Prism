@@ -13,7 +13,7 @@ class BiquadFilterTest {
 
         val inputSamples = floatArrayOf(0.1f, -0.5f, 0.8f, -0.2f, 0.0f)
         for (sample in inputSamples) {
-            val out = filter.processSample(sample, channel = 0)
+            val out = filter.processSample(sample, channel = 0, coeffs = BiquadCoefficients.BYPASS)
             assertEquals(sample, out, 0.0001f)
         }
     }
@@ -38,7 +38,7 @@ class BiquadFilterTest {
         for (n in 0 until numSamples) {
             val t = n.toDouble() / sampleRate
             val input = (0.5 * kotlin.math.sin(2.0 * Math.PI * 1000.0 * t)).toFloat()
-            val output = filter.processSample(input, channel = 0)
+            val output = filter.processSample(input, channel = 0, coeffs = coeffs)
 
             if (n > 100) { // allow transient to settle
                 maxInput = maxOf(maxInput, kotlin.math.abs(input))
@@ -61,14 +61,14 @@ class BiquadFilterTest {
         val filter = BiquadFilter(coefficients = coeffs, maxChannels = 1)
 
         // Excite filter with an impulse
-        filter.processSample(1.0f, channel = 0)
-        filter.processSample(0.0f, channel = 0)
+        filter.processSample(1.0f, channel = 0, coeffs = coeffs)
+        filter.processSample(0.0f, channel = 0, coeffs = coeffs)
 
         // Reset filter
         filter.reset()
 
         // After reset, 0.0 input must immediately yield 0.0 output (no ring-down tail)
-        val outAfterReset = filter.processSample(0.0f, channel = 0)
+        val outAfterReset = filter.processSample(0.0f, channel = 0, coeffs = coeffs)
         assertEquals(0.0f, outAfterReset, 0.00001f)
     }
 
@@ -83,10 +83,10 @@ class BiquadFilterTest {
         val filter = BiquadFilter(coefficients = coeffs, maxChannels = 2)
 
         // Excite channel 0 only
-        filter.processSample(1.0f, channel = 0)
+        filter.processSample(1.0f, channel = 0, coeffs = coeffs)
 
         // Channel 1 should still have zero state registers
-        val ch1Out = filter.processSample(0.0f, channel = 1)
+        val ch1Out = filter.processSample(0.0f, channel = 1, coeffs = coeffs)
         assertEquals(0.0f, ch1Out, 0.00001f)
     }
 }
