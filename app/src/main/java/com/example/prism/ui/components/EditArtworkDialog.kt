@@ -88,6 +88,7 @@ fun EditArtworkDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.imePadding(),
         title = {
             Text(
                 text = stringResource(R.string.edit_artwork_title),

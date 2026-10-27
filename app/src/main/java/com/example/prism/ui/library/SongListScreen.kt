@@ -169,6 +169,7 @@ fun SongListScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
+                .imePadding()
         ) {
             // ── Header ──────────────────────────────
             Row(
