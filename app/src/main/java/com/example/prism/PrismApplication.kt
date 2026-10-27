@@ -13,6 +13,7 @@ import com.example.prism.data.artwork.SongArtworkKeyer
 import com.example.prism.core.di.appModule
 import com.example.prism.BuildConfig
 import com.example.prism.core.util.DispatcherProvider
+import com.example.prism.core.util.StartupMetrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
@@ -25,7 +26,9 @@ import timber.log.Timber
 class PrismApplication : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
+        StartupMetrics.start()                             // ← Phase 0: absolute t0
         super.onCreate()
+        StartupMetrics.mark("super.onCreate done")         // ← Phase 1
 
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
@@ -38,14 +41,17 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             androidContext(this@PrismApplication)
             modules(appModule)
         }
+        StartupMetrics.mark("startKoin done")              // ← Phase 2
 
         val appScope: CoroutineScope = get()
         val dispatchers: DispatcherProvider = get()
+        StartupMetrics.mark("scopes resolved")             // ← Phase 3
 
         // Pre-warm Coil's SingletonImageLoader and DiskCache asynchronously on IO dispatcher
         // so that filesystem directory creation and OkHttp setup do not block the first Compose frame.
         appScope.launch(dispatchers.io) {
             SingletonImageLoader.get(this@PrismApplication)
+            StartupMetrics.mark("coil pre-warm done")      // ← Phase 4 (IO thread)
         }
 
         // Defer MediaStore observation slightly (300 ms) on the IO dispatcher so that
@@ -55,6 +61,7 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
             kotlinx.coroutines.delay(300)
             val scannerRepository: ScannerRepository = get()
             scannerRepository.startObserving()
+            StartupMetrics.mark("scanner started")         // ← Phase 5 (IO thread, +300ms delayed)
         }
     }
 
