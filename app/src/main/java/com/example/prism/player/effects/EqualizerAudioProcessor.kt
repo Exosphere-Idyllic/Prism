@@ -104,84 +104,89 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
-        val remaining = inputBuffer.remaining()
-        if (remaining == 0) return
+        val probeStart = EqualizerProbe.onQueueInputStart()
+        try {
+            val remaining = inputBuffer.remaining()
+            if (remaining == 0) return
 
-        // If equalizer is disabled, bypass processing with a direct byte copy (zero latency, zero CPU overhead)
-        if (!isEqEnabled) {
+            // If equalizer is disabled, bypass processing with a direct byte copy (zero latency, zero CPU overhead)
+            if (!isEqEnabled) {
+                val output = replaceOutputBuffer(remaining)
+                output.put(inputBuffer)
+                output.flip()
+                return
+            }
+
+            val encoding = inputAudioFormat.encoding
+            val channelCount = inputAudioFormat.channelCount.coerceIn(1, MAX_CHANNELS)
             val output = replaceOutputBuffer(remaining)
-            output.put(inputBuffer)
+            output.order(ByteOrder.nativeOrder())
+            inputBuffer.order(ByteOrder.nativeOrder())
+
+            val bandCount = activeBandCount
+            val preamp = preampLinear
+            val useLimiter = limiterEnabled
+
+            if (encoding == C.ENCODING_PCM_16BIT) {
+                val sampleCount = remaining / 2
+                var channel = 0
+
+                for (i in 0 until sampleCount) {
+                    val rawShort = inputBuffer.short
+                    var sample = rawShort * (1.0f / 32768.0f)
+
+                    // Apply preamp
+                    sample *= preamp
+
+                    // Apply cascaded biquad filters
+                    for (b in 0 until bandCount) {
+                        sample = filters[b].processSample(sample, channel)
+                    }
+
+                    // Apply soft-knee limiter if enabled
+                    if (useLimiter) {
+                        sample = softClip(sample)
+                    }
+
+                    // Convert back to 16-bit PCM integer
+                    val outInt = (sample * 32767.0f).toInt()
+                    val clampedShort = outInt.coerceIn(-32768, 32767).toShort()
+                    output.putShort(clampedShort)
+
+                    channel++
+                    if (channel >= channelCount) channel = 0
+                }
+            } else if (encoding == C.ENCODING_PCM_FLOAT) {
+                val sampleCount = remaining / 4
+                var channel = 0
+
+                for (i in 0 until sampleCount) {
+                    var sample = inputBuffer.float
+
+                    // Apply preamp
+                    sample *= preamp
+
+                    // Apply cascaded biquad filters
+                    for (b in 0 until bandCount) {
+                        sample = filters[b].processSample(sample, channel)
+                    }
+
+                    // Apply soft-knee limiter if enabled
+                    if (useLimiter) {
+                        sample = softClip(sample)
+                    }
+
+                    output.putFloat(sample)
+
+                    channel++
+                    if (channel >= channelCount) channel = 0
+                }
+            }
+
             output.flip()
-            return
+        } finally {
+            EqualizerProbe.onQueueInputEnd(probeStart)
         }
-
-        val encoding = inputAudioFormat.encoding
-        val channelCount = inputAudioFormat.channelCount.coerceIn(1, MAX_CHANNELS)
-        val output = replaceOutputBuffer(remaining)
-        output.order(ByteOrder.nativeOrder())
-        inputBuffer.order(ByteOrder.nativeOrder())
-
-        val bandCount = activeBandCount
-        val preamp = preampLinear
-        val useLimiter = limiterEnabled
-
-        if (encoding == C.ENCODING_PCM_16BIT) {
-            val sampleCount = remaining / 2
-            var channel = 0
-
-            for (i in 0 until sampleCount) {
-                val rawShort = inputBuffer.short
-                var sample = rawShort * (1.0f / 32768.0f)
-
-                // Apply preamp
-                sample *= preamp
-
-                // Apply cascaded biquad filters
-                for (b in 0 until bandCount) {
-                    sample = filters[b].processSample(sample, channel)
-                }
-
-                // Apply soft-knee limiter if enabled
-                if (useLimiter) {
-                    sample = softClip(sample)
-                }
-
-                // Convert back to 16-bit PCM integer
-                val outInt = (sample * 32767.0f).toInt()
-                val clampedShort = outInt.coerceIn(-32768, 32767).toShort()
-                output.putShort(clampedShort)
-
-                channel++
-                if (channel >= channelCount) channel = 0
-            }
-        } else if (encoding == C.ENCODING_PCM_FLOAT) {
-            val sampleCount = remaining / 4
-            var channel = 0
-
-            for (i in 0 until sampleCount) {
-                var sample = inputBuffer.float
-
-                // Apply preamp
-                sample *= preamp
-
-                // Apply cascaded biquad filters
-                for (b in 0 until bandCount) {
-                    sample = filters[b].processSample(sample, channel)
-                }
-
-                // Apply soft-knee limiter if enabled
-                if (useLimiter) {
-                    sample = softClip(sample)
-                }
-
-                output.putFloat(sample)
-
-                channel++
-                if (channel >= channelCount) channel = 0
-            }
-        }
-
-        output.flip()
     }
 
     override fun onFlush() {
@@ -203,6 +208,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
      * above 2/3 toward 1.0 to eliminate harsh digital clipping without expensive transcendentals.
      */
     private fun softClip(x: Float): Float {
+        if (x > 0.666667f || x < -0.666667f) EqualizerProbe.onClip()
         return when {
             x > 1.333333f -> 1.0f
             x < -1.333333f -> -1.0f
