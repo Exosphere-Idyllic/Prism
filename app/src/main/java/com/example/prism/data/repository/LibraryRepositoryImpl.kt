@@ -3,8 +3,10 @@ package com.example.prism.data.repository
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
+import com.example.prism.BuildConfig
 import com.example.prism.core.util.DispatcherProvider
 import com.example.prism.data.db.AppDatabase
+import com.example.prism.data.db.search.SearchQuery
 import com.example.prism.data.entity.Album
 import com.example.prism.data.entity.Artist
 import com.example.prism.data.entity.Song
@@ -56,7 +58,17 @@ class LibraryRepositoryImpl(
                 enablePlaceholders = false,
             ),
         ) {
-            if (query.isEmpty()) songDao.getAllSongsPaging() else songDao.searchSongsPaging("%$query%")
+            when {
+                query.isEmpty() -> songDao.getAllSongsPaging()
+
+                BuildConfig.USE_FTS_SEARCH -> {
+                    val ftsQuery = SearchQuery.toFtsMatch(query)
+                    if (ftsQuery != null) songDao.searchSongsFts(ftsQuery)
+                    else songDao.getAllSongsPaging() // query < 2 chars -> sin filtro
+                }
+
+                else -> songDao.searchSongsPaging("%$query%")
+            }
         }.flow
     }
 
