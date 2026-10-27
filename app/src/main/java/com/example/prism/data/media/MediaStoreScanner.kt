@@ -131,15 +131,16 @@ class MediaStoreScannerImpl(
             }
         }
         if (hasStarted.compareAndSet(false, true)) {
-            // Delay the first automatic scan by 800 ms when the database already has songs.
-            // This lets the initial PagingData query (Room) and Coil disk-cache reads for
-            // the first visible frame complete without competing with MediaStore I/O.
+            // Delay the first automatic scan by 200 ms when the database already has songs.
+            // Reduced from 800 ms: the scanner now starts from ProcessLifecycleOwner.onStart
+            // (after first frame is drawn), so the Compose layout and initial Paging query
+            // have already finished before this delay even begins.
             // When the DB is empty (first install / full-scan), trigger immediately so the
             // loading spinner shows and data appears as fast as possible.
             val hasSongsAlready = database.songDao().getSongCountSync() > 0
             if (hasSongsAlready) {
                 scope.launch(dispatchers.io) {
-                    kotlinx.coroutines.delay(800)
+                    kotlinx.coroutines.delay(200)
                     scanRequests.trySend(Unit)
                 }
             } else {

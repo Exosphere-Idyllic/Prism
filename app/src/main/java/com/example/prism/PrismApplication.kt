@@ -21,6 +21,9 @@ import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import timber.log.Timber
 
 class PrismApplication : Application(), SingletonImageLoader.Factory {
@@ -43,26 +46,22 @@ class PrismApplication : Application(), SingletonImageLoader.Factory {
         }
         StartupMetrics.mark("startKoin done")              // ← Phase 2
 
+        // Defer MediaStore observation to first onStart (ProcessLifecycleOwner).
+        // This removes the artificial delay(300) and ensures the scanner only starts
+        // after the first Activity is visible — never competing with the initial Paging
+        // query and Compose layout during the cold start critical path.
         val appScope: CoroutineScope = get()
         val dispatchers: DispatcherProvider = get()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                appScope.launch(dispatchers.io) {
+                    SingletonImageLoader.get(this@PrismApplication)
+                    val scannerRepository: ScannerRepository = get()
+                    scannerRepository.startObserving()
+                }
+            }
+        })
         StartupMetrics.mark("scopes resolved")             // ← Phase 3
-
-        // Pre-warm Coil's SingletonImageLoader and DiskCache asynchronously on IO dispatcher
-        // so that filesystem directory creation and OkHttp setup do not block the first Compose frame.
-        appScope.launch(dispatchers.io) {
-            SingletonImageLoader.get(this@PrismApplication)
-            StartupMetrics.mark("coil pre-warm done")      // ← Phase 4 (IO thread)
-        }
-
-        // Defer MediaStore observation slightly (300 ms) on the IO dispatcher so that
-        // the initial Compose frame, layout measurement, and initial Room paging query
-        // execute unhindered without thread/binder contention during the critical cold start window.
-        appScope.launch(dispatchers.io) {
-            kotlinx.coroutines.delay(300)
-            val scannerRepository: ScannerRepository = get()
-            scannerRepository.startObserving()
-            StartupMetrics.mark("scanner started")         // ← Phase 5 (IO thread, +300ms delayed)
-        }
     }
 
 
