@@ -14,6 +14,9 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+
+        // Feature flag: controla si getSongsFlow usa FTS o LIKE
+        buildConfigField("boolean", "USE_FTS_SEARCH", "false")
     }
 
     buildTypes {
