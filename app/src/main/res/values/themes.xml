@@ -2,7 +2,9 @@
 <resources>
 
     <style name="Theme.Prism" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/splash_background</item>
+        <!-- windowBackground intentionally omitted: Compose manages its own background via
+             Surface/Box. An explicit windowBackground causes an extra system redraw before
+             the first Compose frame, adding ~50-150ms to the cold start Gap B. -->
     </style>
 
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
