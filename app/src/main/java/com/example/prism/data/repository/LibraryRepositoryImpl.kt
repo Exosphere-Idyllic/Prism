@@ -53,35 +53,28 @@ class LibraryRepositoryImpl(
                 pageSize = 40,
                 initialLoadSize = 40,
                 prefetchDistance = 25,
-                maxSize = PagingConfig.MAX_SIZE_UNBOUNDED,
+                maxSize = 400,
                 enablePlaceholders = false,
             ),
         ) {
-            val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
-            if (ftsQuery != null) {
-                songDao.searchSongsFts(ftsQuery)
-            } else {
-                songDao.getAllSongsPaging()
-            }
+            // minLength = 1: "r" → "r*", comportamiento Spotify-style.
+            // query vacía → getAllSongsPaging (sin filtro).
+            val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query, minLength = 1) else null
+            if (ftsQuery != null) songDao.searchSongsFts(ftsQuery)
+            else songDao.getAllSongsPaging()
         }.flow
     }
 
     override fun getAlbumsFlow(query: String): Flow<List<Album>> {
-        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
-        return if (ftsQuery != null) {
-            albumDao.searchAlbumsFts(ftsQuery)
-        } else {
-            albumDao.getAllAlbums()
-        }
+        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query, minLength = 1) else null
+        return if (ftsQuery != null) albumDao.searchAlbumsFts(ftsQuery)
+        else albumDao.getAllAlbums()
     }
 
     override fun getArtistsFlow(query: String): Flow<List<Artist>> {
-        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query) else null
-        return if (ftsQuery != null) {
-            artistDao.searchArtistsFts(ftsQuery)
-        } else {
-            artistDao.getAllArtists()
-        }
+        val ftsQuery = if (query.isNotEmpty()) SearchQuery.toFtsMatch(query, minLength = 1) else null
+        return if (ftsQuery != null) artistDao.searchArtistsFts(ftsQuery)
+        else artistDao.getAllArtists()
     }
 
     override fun getSongsByAlbum(id: Long): Flow<List<Song>> = songDao.getSongsByAlbum(id)

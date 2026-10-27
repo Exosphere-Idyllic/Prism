@@ -9,11 +9,17 @@ package com.example.prism.data.db.search
  *   ( ) -> agrupación
  *   - -> negación
  *   ^ : -> operadores de columna
+ *   \ -> delimitador en algunos tokenizadores; se elimina preventivamente
  *
  * Devuelve null si la query queda vacía o es demasiado corta.
+ * Con minLength = 1 (default del repositorio), "r" produce "r*" y matchea
+ * prefijos de un carácter — comportamiento Spotify-style.
  */
 object SearchQuery {
-    private val SPECIAL_CHARS = Regex("[\\\"*()\\-^:]")
+    // Caracteres reservados de FTS4: " * ( ) - ^ : \
+    // El guión se coloca al final para evitar ambigüedad de rango en la clase de caracteres.
+    // \\\\ en una cadena Kotlin normal → \\ en la regex → match de un literal backslash.
+    private val SPECIAL_CHARS = Regex("[\"*()^:\\\\-]")
     private val WHITESPACE = Regex("\\s+")
 
     fun toFtsMatch(raw: String, minLength: Int = 2): String? {

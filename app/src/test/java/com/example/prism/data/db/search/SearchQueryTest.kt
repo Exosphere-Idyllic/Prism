@@ -5,11 +5,14 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SearchQueryTest {
+    // --- Comportamiento por defecto (minLength = 2, valor del parámetro) ---
+
     @Test
     fun `empty returns null`() = assertNull(SearchQuery.toFtsMatch(""))
 
     @Test
-    fun `too short returns null`() = assertNull(SearchQuery.toFtsMatch("r"))
+    fun `single char with default minLength returns null`() =
+        assertNull(SearchQuery.toFtsMatch("r"))
 
     @Test
     fun `simple adds wildcard`() =
@@ -32,6 +35,24 @@ class SearchQueryTest {
         assertEquals("rock*", SearchQuery.toFtsMatch("-rock* ()"))
 
     @Test
+    fun `strips backslash`() =
+        assertEquals("rock*", SearchQuery.toFtsMatch("\\rock"))
+
+    @Test
     fun `keeps accents`() =
         assertEquals("canción*", SearchQuery.toFtsMatch("canción"))
+
+    // --- Opción C (minLength = 1): comportamiento Spotify-style ---
+
+    @Test
+    fun `single char with minLength 1 adds wildcard`() =
+        assertEquals("r*", SearchQuery.toFtsMatch("r", minLength = 1))
+
+    @Test
+    fun `empty still returns null with minLength 1`() =
+        assertNull(SearchQuery.toFtsMatch("", minLength = 1))
+
+    @Test
+    fun `single special char stripped to empty returns null with minLength 1`() =
+        assertNull(SearchQuery.toFtsMatch("\"", minLength = 1))
 }
