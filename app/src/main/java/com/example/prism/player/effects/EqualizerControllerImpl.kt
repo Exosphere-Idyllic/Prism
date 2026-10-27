@@ -9,9 +9,10 @@ import com.example.prism.domain.repository.EqualizerRepository
 import com.example.prism.player.CustomCommandDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.milliseconds
 
 class EqualizerControllerImpl(
     private val equalizerRepository: EqualizerRepository,
@@ -22,19 +23,18 @@ class EqualizerControllerImpl(
 ) : EqualizerController {
 
     private val syncJob = scope.launch(dispatchers.default) {
-        equalizerRepository.equalizerConfig.collectLatest { config ->
-            dispatchConfig(config)
-        }
-    }
-
-    private suspend fun dispatchConfig(config: EqualizerConfig) {
-        val jsonStr = json.encodeToString(EqualizerConfig.serializer(), config)
-        val args = Bundle().apply {
-            putString(EqualizerCommands.EXTRA_CONFIG_JSON, jsonStr)
-        }
-        withContext(dispatchers.main) {
-            commandDispatcher.sendCustomCommand(EqualizerCommands.COMMAND_SET_EQ_CONFIG, args)
-        }
+        equalizerRepository.equalizerConfig
+            .debounce(16.milliseconds) // One frame: coalesces rapid slider drags into a single dispatch
+            .collectLatest { config ->
+                val jsonStr = json.encodeToString(EqualizerConfig.serializer(), config)
+                val args = Bundle().apply {
+                    putString(EqualizerCommands.EXTRA_CONFIG_JSON, jsonStr)
+                }
+                // sendCustomCommand already posts to main thread internally (MediaController Binder IPC).
+                // No withContext(main) hop needed here — eliminates an unnecessary coroutine context switch
+                // on every slider move.
+                commandDispatcher.sendCustomCommand(EqualizerCommands.COMMAND_SET_EQ_CONFIG, args)
+            }
     }
 
     override suspend fun setEnabled(enabled: Boolean) {
