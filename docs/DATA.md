@@ -43,8 +43,9 @@ derivan por agregación SQL de la tabla `songs` (`GROUP BY albumId` /
 
 ### `AppDatabase`
 
-`RoomDatabase` con 5 entidades, versión `2`, con `AutoMigration(1, 2)` y
-`exportSchema = true` (los esquemas se versionan en `app/schemas/`).
+`RoomDatabase` con 8 entidades (5 estándar + 3 tablas virtuales FTS4), versión `5`, con
+`AutoMigration(1, 2)`, migraciones manuales `2→3` (`songs_fts`), `3→4` (`albums_fts`)
+y `4→5` (`artists_fts`), y `exportSchema = true` (los esquemas se versionan en `app/schemas/`).
 `AppDatabase.build(context)` construye la instancia con
 `PRAGMA foreign_keys = ON` activado en `onOpen`, imprescindible para que las
 `ForeignKey` con `onDelete = CASCADE` de `PlaylistSong` funcionen.
@@ -52,14 +53,14 @@ derivan por agregación SQL de la tabla `songs` (`GROUP BY albumId` /
 ### DAOs
 
 - **`SongDao`** — el más grande. Expone tanto `List`/`Flow` simples como
-  `PagingSource` (`getAllSongsPaging`, `searchSongsPaging`) para listas
+  `PagingSource` (`getAllSongsPaging`, `searchSongsFts`) para listas
   grandes. Incluye `upsertPreservingUserFields`, una transacción Room que
   inserta canciones nuevas e ignora conflictos (`OnConflictStrategy.IGNORE`),
   y para las que ya existen actualiza solo columnas provenientes del escáner
   sin pisar `customArtworkUri`/`customLyricsUri`.
-- **`AlbumDao`** / **`ArtistDao`** — CRUD de las tablas materializadas, con
-  `syncAllFromSongs()` (resincronización completa vía SQL `INSERT ... SELECT
-  ... ON CONFLICT DO UPDATE`) y `syncFromSongsForIds`/`syncFromSongsForNames`
+- **`AlbumDao`** / **`ArtistDao`** — CRUD y búsqueda FTS (`searchAlbumsFts`, `searchArtistsFts`)
+  de las tablas materializadas, con `syncAllFromSongs()` (resincronización completa vía SQL
+  `INSERT ... SELECT ... ON CONFLICT DO UPDATE`) y `syncFromSongsForIds`/`syncFromSongsForNames`
   para resincronización incremental acotada a un lote de IDs/nombres.
   `deleteOrphans()` elimina álbumes/artistas que ya no tienen canciones.
 - **`PlaylistDao`** — incluye dos primitivas atómicas notables:
@@ -70,6 +71,62 @@ derivan por agregación SQL de la tabla `songs` (`GROUP BY albumId` /
   - `getOrCreateFavorites`: `@Transaction` que hace `INSERT OR IGNORE` +
     `SELECT` para garantizar que la playlist "Favorites" existe exactamente
     una vez, sin duplicados por nombre bajo carreras.
+
+## Búsqueda Full-Text (FTS4)
+
+El motor de búsqueda de canciones, álbumes y artistas utiliza SQLite FTS4 con `contentEntity`
+para indexación y consultas en O(log N), reemplazando los escaneos de tabla completa de `LIKE '%query%'`.
+
+### Arquitectura de almacenamiento (`contentEntity`)
+Las tablas virtuales `songs_fts`, `albums_fts` y `artists_fts` no almacenan copias redundantes
+de los datos:
+- Los datos residen exclusivamente en las tablas físicas `songs`, `albums` y `artists`.
+- Cuatro triggers SQLite por tabla (`BEFORE UPDATE`, `BEFORE DELETE`, `AFTER UPDATE`, `AFTER INSERT`)
+  mantienen automáticamente sincronizados los índices FTS cuando se ejecutan operaciones de inserción,
+  modificación o eliminación.
+- El costo de escritura adicional es de solo ~10–15% sobre las tablas principales durante los escaneos.
+
+### Sanitizador de queries (`SearchQuery`)
+La clase `SearchQuery` (`data/db/search/SearchQuery.kt`) normaliza la entrada del usuario antes
+de suministrarla a la cláusula `MATCH`:
+- **Caracteres reservados:** Se reemplazan por espacios los operadores propios de FTS4:
+  `"` (frase exacta), `*` (wildcard), `( )` (agrupación), `-` (negación), `^` y `:` (filtros de columna).
+- **Wildcard de prefijo:** A cada término resultante se le añade el operador de prefijo `*`
+  (ej. `"rock ballads"` → `"rock* ballads*"`).
+- **Multi-palabra (AND implícito):** Múltiples términos separados por espacio exigen que todos
+  coincidan en el documento.
+- **Longitud mínima:** Si la consulta tiene menos de 2 caracteres (`minLength = 2`), se descarta
+  (devuelve `null`) y el repositorio emite la colección completa sin filtrar.
+
+### Comportamiento y limitaciones conocidas
+1. **Prefix-only (no substring):**
+   FTS4 con el tokenizador `unicode61` indexa por palabras completas (tokens). Las búsquedas coinciden
+   únicamente con el **inicio** de cada palabra:
+   - Query `"rih"` matchea `"Rihanna"` ✓
+   - Query `"rock"` matchea `"Rockstar"` ✓
+   - Query `"ock"` **no** matchea `"Rockstar"` (no es prefijo de token)
+   Este comportamiento es intencional y consistente con las aplicaciones principales de streaming
+   (Spotify, YouTube Music, Apple Music).
+2. **Sensibilidad a acentos:**
+   El tokenizador `unicode61` de Room no hace folding automático de acentos ("canción" ≠ "cancion").
+   Normalizaciones adicionales requerirían desacoplarse de `contentEntity` y gestionar la sincronización
+   manual, por lo que se mantiene en `unicode61`.
+3. **Ordenamiento:**
+   Las consultas FTS ordenan los resultados alfabéticamente (`ORDER BY title ASC`, `ORDER BY albumName ASC`,
+   `ORDER BY name ASC`) en lugar de ranking por BM25, optimizado para bibliotecas de música personales.
+
+### Cómo añadir una nueva columna al índice en el futuro
+Para incorporar un campo adicional a cualquiera de las tablas FTS:
+1. Crear una migración manual `N → N+1` en `AppDatabase`.
+2. Actualizar la entidad `@Fts4` correspondiente (ej. `SongFts`) añadiendo el campo.
+3. En el método `migrate(db: SupportSQLiteDatabase)`:
+   - Eliminar la tabla virtual existente: `DROP TABLE IF EXISTS table_fts`.
+   - Recrear la tabla virtual con la nueva columna y `content='table'`.
+   - Recrear los 4 triggers (`BEFORE UPDATE`, `BEFORE DELETE`, `AFTER UPDATE`, `AFTER INSERT`)
+     incluyendo la nueva columna en las sentencias `INSERT`.
+   - Forzar el repoblado inmediato: `INSERT INTO table_fts(table_fts) VALUES ('rebuild')`.
+4. Incrementar la versión de `@Database` a `N+1` y compilar para exportar el esquema `N+1.json`.
+
 
 ## Escáner de biblioteca (`data/media/`)
 
