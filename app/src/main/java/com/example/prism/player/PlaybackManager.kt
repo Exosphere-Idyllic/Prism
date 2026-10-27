@@ -34,12 +34,20 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicReference
 
+data class PlaybackError(
+    val message: String,
+    val errorCode: Int,
+    val errorCodeName: String,
+    val timestamp: Long = System.currentTimeMillis(),
+)
+
 interface PlaybackManager {
     val currentSong: StateFlow<Song?>
     val isPlayingState: StateFlow<Boolean>
     val progressState: StateFlow<ProgressState>
     val shuffleModeState: StateFlow<Boolean>
     val repeatModeState: StateFlow<Int>
+    val playbackError: StateFlow<PlaybackError?>
 
     fun playSong(song: Song, playlistSongs: List<Song> = emptyList())
     fun togglePlayPause()
@@ -48,6 +56,7 @@ interface PlaybackManager {
     fun seekTo(positionMs: Long)
     fun toggleShuffle()
     fun toggleRepeatMode()
+    fun clearPlaybackError()
     fun release()
 }
 
@@ -57,6 +66,7 @@ class PlaybackManagerImpl(
     private val preferences: PlaybackPreferences,
     private val dispatchers: DispatcherProvider,
     private val scope: CoroutineScope,
+    private val progressTracker: ProgressTracker = ProgressTracker(dispatchers, scope),
 ) : PlaybackManager, CustomCommandDispatcher {
 
     companion object {
@@ -66,6 +76,8 @@ class PlaybackManagerImpl(
          */
         private const val INITIAL_WINDOW = 31
         private const val EXPAND_THRESHOLD = 20
+        private const val MAX_WINDOW_SIZE = 60
+        private const val KEEP_PREVIOUS_COUNT = 10
     }
 
     private val _currentSong = MutableStateFlow<Song?>(null)
@@ -74,13 +86,19 @@ class PlaybackManagerImpl(
     private val _isPlayingState = MutableStateFlow(false)
     override val isPlayingState = _isPlayingState.asStateFlow()
 
+    private val _playbackError = MutableStateFlow<PlaybackError?>(null)
+    override val playbackError = _playbackError.asStateFlow()
+
+    override fun clearPlaybackError() {
+        _playbackError.value = null
+    }
+
     private val _shuffleModeState = MutableStateFlow(false)
     override val shuffleModeState = _shuffleModeState.asStateFlow()
 
     private val _repeatModeState = MutableStateFlow(Player.REPEAT_MODE_OFF)
     override val repeatModeState = _repeatModeState.asStateFlow()
 
-    private val progressTracker = ProgressTracker(dispatchers, scope)
     override val progressState = progressTracker.progressState
 
     @Volatile
@@ -195,6 +213,11 @@ class PlaybackManagerImpl(
                 Timber.e(error, "Playback error: ${error.errorCodeName}")
                 _isPlayingState.value = false
                 progressTracker.onPlayingChanged(false)
+                _playbackError.value = PlaybackError(
+                    message = error.localizedMessage ?: "Playback error",
+                    errorCode = error.errorCode,
+                    errorCodeName = error.errorCodeName,
+                )
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -384,6 +407,7 @@ class PlaybackManagerImpl(
             }
 
             try {
+                _playbackError.value = null
                 _currentSong.value = song
                 controller.repeatMode = _repeatModeState.value
                 controller.setMediaItems(mediaItems, startIndex, 0L)
@@ -414,6 +438,23 @@ class PlaybackManagerImpl(
                     controller.addMediaItems(newItems)
                     activePlaylist = activePlaylist + songsToAdd
                     Timber.d("Expanded queue by %d items (total in active window: %d)", newItems.size, activePlaylist.size)
+
+                    // Bounded window pruning: avoid unbounded growth of active window in memory and IPC
+                    val currentIndex = controller.currentMediaItemIndex
+                    if (activePlaylist.size > MAX_WINDOW_SIZE && currentIndex > KEEP_PREVIOUS_COUNT) {
+                        val pruneCount = currentIndex - KEEP_PREVIOUS_COUNT
+                        if (pruneCount > 0 && pruneCount < activePlaylist.size) {
+                            controller.removeMediaItems(0, pruneCount)
+                            activePlaylist = activePlaylist.drop(pruneCount)
+                            activeWindowStart += pruneCount
+                            Timber.d(
+                                "Pruned %d played items from window (new active size: %d, windowStart: %d)",
+                                pruneCount,
+                                activePlaylist.size,
+                                activeWindowStart,
+                            )
+                        }
+                    }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to expand queue in PlaybackManager")
                 }

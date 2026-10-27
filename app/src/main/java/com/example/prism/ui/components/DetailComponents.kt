@@ -133,13 +133,17 @@ fun DetailSongList(
     val defaultCoverPainters = rememberDefaultCoverPainters()
 
     // Prefetch upcoming images into Coil's memory/disk cache ahead of scrolling.
-    LaunchedEffect(listState, imageLoader) {
+    LaunchedEffect(listState, imageLoader, songs.size) {
         var lastPrefetchedUpTo = -1
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { firstIndex ->
                 if (firstIndex < 0) return@collect
                 val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(8)
+                // If user scrolled up significantly, adjust prefetch horizon so scrolling back down triggers prefetch
+                if (firstIndex < lastPrefetchedUpTo - visibleCount - 6) {
+                    lastPrefetchedUpTo = firstIndex + visibleCount
+                }
                 val prefetchTarget = (firstIndex + visibleCount + 6).coerceAtMost(songs.size - 1)
                 if (prefetchTarget <= lastPrefetchedUpTo) return@collect
                 val start = (firstIndex + visibleCount).coerceAtMost(prefetchTarget)

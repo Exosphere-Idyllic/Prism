@@ -79,7 +79,7 @@ fun SongList(
     // Observes firstVisibleItemIndex instead of layoutInfo to avoid evaluating
     // snapshot state on every subpixel frame of scrolling.
     @OptIn(FlowPreview::class)
-    LaunchedEffect(listState, imageLoader) {
+    LaunchedEffect(listState, imageLoader, songs.itemCount) {
         var lastPrefetchedUpTo = -1
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
@@ -87,6 +87,10 @@ fun SongList(
             .collect { firstIndex ->
                 if (firstIndex < 0) return@collect
                 val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(8)
+                // If user scrolled up significantly, adjust prefetch horizon so scrolling back down triggers prefetch
+                if (firstIndex < lastPrefetchedUpTo - visibleCount - 6) {
+                    lastPrefetchedUpTo = firstIndex + visibleCount
+                }
                 val prefetchTarget = (firstIndex + visibleCount + 6).coerceAtMost(songs.itemCount - 1)
                 if (prefetchTarget <= lastPrefetchedUpTo) return@collect
                 val start = (firstIndex + visibleCount).coerceAtMost(prefetchTarget)

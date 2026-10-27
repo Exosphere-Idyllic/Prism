@@ -161,4 +161,15 @@ class PlaybackManagerTest {
         playbackManager.previous()
         assertFalse(playbackManager.isPlayingState.value)
     }
+
+    @Test
+    fun playbackError_initialStateIsNull() {
+        assertNull(playbackManager.playbackError.value)
+    }
+
+    @Test
+    fun clearPlaybackError_clearsErrorState() {
+        playbackManager.clearPlaybackError()
+        assertNull(playbackManager.playbackError.value)
+    }
 }

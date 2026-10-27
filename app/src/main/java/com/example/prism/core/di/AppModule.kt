@@ -19,6 +19,7 @@ import com.example.prism.domain.repository.EqualizerRepository
 import com.example.prism.player.CustomCommandDispatcher
 import com.example.prism.player.PlaybackManager
 import com.example.prism.player.PlaybackManagerImpl
+import com.example.prism.player.ProgressTracker
 import com.example.prism.player.effects.EqualizerAudioProcessor
 import com.example.prism.player.effects.EqualizerController
 import com.example.prism.player.effects.EqualizerControllerImpl
@@ -59,6 +60,8 @@ val appModule = module {
 
     single { PlaybackPreferences(context = get()) }
 
+    factory { ProgressTracker(dispatchers = get(), scope = get()) }
+
     single {
         PlaybackManagerImpl(
             app = get(),
@@ -66,6 +69,7 @@ val appModule = module {
             preferences = get(),
             dispatchers = get(),
             scope = get(),
+            progressTracker = get(),
         )
     }
     single<PlaybackManager> { get<PlaybackManagerImpl>() }

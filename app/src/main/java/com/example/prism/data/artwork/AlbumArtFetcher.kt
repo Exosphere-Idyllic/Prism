@@ -10,12 +10,10 @@ import android.provider.MediaStore
 import android.util.Size
 import androidx.core.net.toUri
 import coil3.ImageLoader
-import coil3.asImage
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
-import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import java.io.ByteArrayOutputStream
@@ -175,11 +173,7 @@ class AlbumArtFetcher(
         // Strategy 2: System thumbnail by song MediaStore URI (API 29+)
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
             fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { bitmap ->
-                return ImageFetchResult(
-                    image = bitmap.asImage(),
-                    isSampled = false,
-                    dataSource = DataSource.DISK,
-                )
+                return bitmapToSourceResult(bitmap)
             }
         }
 
@@ -222,11 +216,7 @@ class AlbumArtFetcher(
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             fetchSystemThumbnail(songUri, signal)?.let { bitmap ->
-                return ImageFetchResult(
-                    image = bitmap.asImage(),
-                    isSampled = false,
-                    dataSource = DataSource.DISK,
-                )
+                return bitmapToSourceResult(bitmap)
             }
         }
 
@@ -321,7 +311,7 @@ class AlbumArtFetcher(
         }
     }
 
-    private fun bytesToSourceResult(bytes: ByteArray, dataSource: DataSource = DataSource.DISK): FetchResult {
+    private fun bytesToSourceResult(bytes: ByteArray, dataSource: DataSource = DataSource.NETWORK): FetchResult {
         val buffer = Buffer().write(bytes)
         return SourceFetchResult(
             source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
@@ -330,7 +320,7 @@ class AlbumArtFetcher(
         )
     }
 
-    private fun bitmapToSourceResult(bitmap: Bitmap): FetchResult {
+    private fun bitmapToSourceResult(bitmap: Bitmap, dataSource: DataSource = DataSource.NETWORK): FetchResult {
         val squareBitmap = cropToSquare(bitmap)
         val stream = ByteArrayOutputStream()
         squareBitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
@@ -342,7 +332,7 @@ class AlbumArtFetcher(
         return SourceFetchResult(
             source = ImageSource(source = buffer, fileSystem = FileSystem.SYSTEM),
             mimeType = "image/jpeg",
-            dataSource = DataSource.DISK,
+            dataSource = dataSource,
         )
     }
 
