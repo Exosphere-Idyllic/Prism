@@ -142,5 +142,38 @@ class ArtworkFetcherTest {
         val fetcherWeb = factory.create(webUri, options, imageLoader)
         org.junit.Assert.assertNull(fetcherWeb)
     }
+
+    @Test
+    fun negativeCache_ttlExpiration() {
+        val key = "test_key"
+        val t0 = 100_000L
+        AlbumArtFetcher.clearNegativeCache()
+
+        AlbumArtFetcher.recordNegative(key, now = t0)
+        // Immediately after insertion
+        org.junit.Assert.assertTrue(AlbumArtFetcher.hasRecentNegative(key, now = t0))
+        // 4 minutes later (within 5-min TTL)
+        org.junit.Assert.assertTrue(AlbumArtFetcher.hasRecentNegative(key, now = t0 + 4 * 60 * 1000L))
+        // Exactly 5 minutes + 1 ms later (expired)
+        org.junit.Assert.assertFalse(AlbumArtFetcher.hasRecentNegative(key, now = t0 + AlbumArtFetcher.NEGATIVE_CACHE_TTL_MS + 1L))
+        // Once expired, subsequent lookup is false as it got removed
+        org.junit.Assert.assertFalse(AlbumArtFetcher.hasRecentNegative(key, now = t0 + 10L))
+    }
+
+    @Test
+    fun negativeCache_clearNegativeCacheFor_removesMatchingPrefix() {
+        AlbumArtFetcher.clearNegativeCache()
+        val songKey = AlbumArtFetcher.negativeCacheKey(albumId = 5L, artworkUri = "", customArtworkUri = "", mediaUri = "content://media/10")
+        val otherSongKey = AlbumArtFetcher.negativeCacheKey(albumId = 6L, artworkUri = "", customArtworkUri = "", mediaUri = "content://media/20")
+        AlbumArtFetcher.recordNegative(songKey)
+        AlbumArtFetcher.recordNegative(otherSongKey)
+
+        org.junit.Assert.assertTrue(AlbumArtFetcher.hasRecentNegative(songKey))
+        org.junit.Assert.assertTrue(AlbumArtFetcher.hasRecentNegative(otherSongKey))
+
+        AlbumArtFetcher.clearNegativeCacheFor(albumId = 5L, mediaUri = "content://media/10")
+        org.junit.Assert.assertFalse(AlbumArtFetcher.hasRecentNegative(songKey))
+        org.junit.Assert.assertTrue(AlbumArtFetcher.hasRecentNegative(otherSongKey))
+    }
 }
 

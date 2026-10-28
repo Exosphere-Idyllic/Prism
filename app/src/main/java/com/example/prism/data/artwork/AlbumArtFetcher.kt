@@ -66,19 +66,35 @@ class AlbumArtFetcher(
         /** Standard master resolution for cached thumbnails. */
         const val MASTER_ARTWORK_SIZE = 512
 
+        private data class NegativeEntry(val timestampMs: Long)
+
         /**
          * Thread-safe LRU negative cache.
-         * Eviction: access-order LRU with a cap of 2000 entries (~80 KB RAM).
+         * Eviction: access-order LRU with a cap of 2000 entries (~80 KB RAM) and 5-min TTL.
          */
-        private val noArtworkCache: MutableSet<String> = Collections.newSetFromMap(
+        private val noArtworkCache: MutableMap<String, NegativeEntry> =
             Collections.synchronizedMap(
-                object : LinkedHashMap<String, Boolean>(512, 0.75f, true) {
-                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
-                        return size > 2000
-                    }
-                },
-            ),
-        )
+                object : LinkedHashMap<String, NegativeEntry>(512, 0.75f, true) {
+                    override fun removeEldestEntry(
+                        eldest: MutableMap.MutableEntry<String, NegativeEntry>?
+                    ): Boolean = size > 2000
+                }
+            )
+
+        internal var NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000L
+
+        internal fun hasRecentNegative(key: String, now: Long = System.currentTimeMillis()): Boolean {
+            val entry = noArtworkCache[key] ?: return false
+            if (now - entry.timestampMs > NEGATIVE_CACHE_TTL_MS) {
+                noArtworkCache.remove(key)
+                return false
+            }
+            return true
+        }
+
+        internal fun recordNegative(key: String, now: Long = System.currentTimeMillis()) {
+            noArtworkCache[key] = NegativeEntry(now)
+        }
 
         /**
          * Builds the negative-cache key for a given artwork request.
@@ -110,12 +126,12 @@ class AlbumArtFetcher(
             if (!mediaUri.isNullOrEmpty()) {
                 val prefix = "song_${albumId}_${mediaUri.hashCode()}"
                 synchronized(noArtworkCache) {
-                    noArtworkCache.removeIf { it.startsWith(prefix) }
+                    noArtworkCache.keys.removeIf { it.startsWith(prefix) }
                 }
             } else {
                 val prefix = "album_${albumId}_"
                 synchronized(noArtworkCache) {
-                    noArtworkCache.removeIf { it.startsWith(prefix) }
+                    noArtworkCache.keys.removeIf { it.startsWith(prefix) }
                 }
             }
         }
@@ -144,7 +160,7 @@ class AlbumArtFetcher(
         val cacheKey = negativeCacheKey(albumId, artworkUri, customArtworkUri, mediaUri, dateModified)
 
         // Fast path: in-memory negative cache
-        if (noArtworkCache.contains(cacheKey)) {
+        if (hasRecentNegative(cacheKey)) {
             ArtworkProbe.onNegativeHit()
             return@withContext null
         }
@@ -161,7 +177,7 @@ class AlbumArtFetcher(
         }
 
         if (result == null && coroutineContext.isActive && !signal.isCanceled) {
-            noArtworkCache.add(cacheKey)
+            recordNegative(cacheKey)
             ArtworkProbe.onNullFetch()
         }
 
