@@ -2,10 +2,7 @@ package com.example.prism.player
 
 import android.app.Application
 import android.content.ComponentName
-import android.content.ContentUris
-import android.provider.MediaStore
 import androidx.core.content.ContextCompat
-import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -304,32 +301,19 @@ class PlaybackManagerImpl(
     }
 
     private fun warmUpArtworkCache(song: Song) {
+        // Un solo request: SongArtworkParams resuelve toda la cascada de fallback
+        // (custom -> sistema thumbnail -> embedded -> album URI) sin necesidad de
+        // un segundo request por URI directa.
+        // allowHardware(false): obligatorio para bitmaps de notificación.
         val imageLoader = SingletonImageLoader.get(app)
         val request = ImageRequest.Builder(app)
             .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
             .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
+            .allowHardware(false)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .build()
         imageLoader.enqueue(request)
-
-        val mediaItemArtworkUri = when {
-            song.customArtworkUri.isNotEmpty() -> song.customArtworkUri.toUri()
-            song.artworkUri.isNotEmpty() -> song.artworkUri.toUri()
-            song.albumId > 0L -> ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, song.albumId)
-            song.mediaUri.isNotEmpty() -> song.mediaUri.toUri()
-            else -> null
-        }
-        if (mediaItemArtworkUri != null) {
-            val uriRequest = ImageRequest.Builder(app)
-                .data(mediaItemArtworkUri)
-                .size(AlbumArtFetcher.MASTER_ARTWORK_SIZE)
-                .allowHardware(false) // Must be software-rendered for notifications
-                .memoryCachePolicy(CachePolicy.ENABLED)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .build()
-            imageLoader.enqueue(uriRequest)
-        }
     }
 
     private suspend fun resolveSongs(ids: List<String>): List<Song> {
