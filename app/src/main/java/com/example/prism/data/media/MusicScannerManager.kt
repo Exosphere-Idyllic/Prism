@@ -3,7 +3,6 @@ package com.example.prism.data.media
 import android.app.Application
 import com.example.prism.core.util.DefaultDispatcherProvider
 import com.example.prism.core.util.DispatcherProvider
-import com.example.prism.data.artwork.AlbumArtFetcher
 import com.example.prism.data.db.AppDatabase
 import com.example.prism.domain.repository.ScannerRepository
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +35,14 @@ class MusicScannerManager(
         dispatchers = dispatchers,
         scanPreferences = scanPreferences,
         onScanChanged = { _, _, _ ->
-            AlbumArtFetcher.clearNegativeCache()
+            // NO-OP intencional.
+            // La caché negativa se invalida por:
+            //   1. dateModified en la clave (AlbumArtFetcher.negativeCacheKey)
+            //   2. customArtworkUri.hashCode() en la clave
+            //   3. TTL de 5 min (Commit 5)
+            //   4. AppModule.onArtworkChanged cuando el usuario cambia portada manualmente
+            // Borrar toda la caché en cada scan destruía su propósito (evitar reintentos
+            // costosos sobre canciones sin arte).
         },
     )
 
