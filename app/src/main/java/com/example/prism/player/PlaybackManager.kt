@@ -304,8 +304,6 @@ class PlaybackManagerImpl(
     }
 
     private fun warmUpArtworkCache(song: Song) {
-        AlbumArtFetcher.clearNegativeCacheFor(song.albumId, song.mediaUri)
-
         val imageLoader = SingletonImageLoader.get(app)
         val request = ImageRequest.Builder(app)
             .data(SongArtworkParams(song = song, size = AlbumArtFetcher.MASTER_ARTWORK_SIZE))
