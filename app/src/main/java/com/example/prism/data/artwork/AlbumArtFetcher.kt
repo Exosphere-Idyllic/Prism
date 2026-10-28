@@ -138,12 +138,17 @@ class AlbumArtFetcher(
     // instances are created by Coil's Factory system without access to the DI container.
     // This is an intentional exception to the project's DispatcherProvider convention.
     override suspend fun fetch(): FetchResult? = withContext(Dispatchers.IO) {
+        ArtworkProbe.onTotalFetch()
+        ArtworkProbe.maybeReport()
+
         val cacheKey = negativeCacheKey(albumId, artworkUri, customArtworkUri, mediaUri, dateModified)
 
         // Fast path: in-memory negative cache
         if (noArtworkCache.contains(cacheKey)) {
+            ArtworkProbe.onNegativeHit()
             return@withContext null
         }
+        ArtworkProbe.onNegativeMiss()
 
         val signal = CancellationSignal()
         val job = coroutineContext[Job]
@@ -157,6 +162,7 @@ class AlbumArtFetcher(
 
         if (result == null && coroutineContext.isActive && !signal.isCanceled) {
             noArtworkCache.add(cacheKey)
+            ArtworkProbe.onNullFetch()
         }
 
         result
@@ -173,13 +179,17 @@ class AlbumArtFetcher(
         // Strategy 2: System thumbnail by song MediaStore URI (API 29+)
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
             fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { bitmap ->
+                ArtworkProbe.onSystemThumb()
                 return bitmapToSourceResult(bitmap)
             }
         }
 
         // Strategy 3: Embedded ID3 artwork via MediaMetadataRetriever
         if (!mediaUri.isNullOrEmpty()) {
-            extractEmbeddedArtwork(mediaUri)?.let { return it }
+            extractEmbeddedArtwork(mediaUri)?.let {
+                ArtworkProbe.onEmbedded()
+                return it
+            }
         }
 
         // Strategy 4: Fallback on legacy Android (< API 29)
@@ -216,11 +226,14 @@ class AlbumArtFetcher(
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             fetchSystemThumbnail(songUri, signal)?.let { bitmap ->
+                ArtworkProbe.onSystemThumb()
                 return bitmapToSourceResult(bitmap)
             }
         }
 
-        return extractEmbeddedArtwork(songUri.toString())
+        return extractEmbeddedArtwork(songUri.toString())?.also {
+            ArtworkProbe.onEmbedded()
+        }
     }
 
     private fun querySongUriForAlbum(albumId: Long): android.net.Uri? {
@@ -263,12 +276,12 @@ class AlbumArtFetcher(
                 scheme == "http" || scheme == "https" -> fetchNetworkBitmap(uri)
                 scheme == "file" || scheme.isNullOrEmpty() -> {
                     val path = parsedUri.path ?: uri
-                    fileToSourceResult(File(path))
+                    fileToSourceResult(File(path))?.also { ArtworkProbe.onCustomUri() }
                 }
                 else -> {
                     context.contentResolver.openInputStream(parsedUri)?.use { stream ->
                         streamToSourceResult(stream)
-                    }
+                    }?.also { ArtworkProbe.onCustomUri() }
                 }
             }
         } catch (_: Exception) {
@@ -285,6 +298,7 @@ class AlbumArtFetcher(
                 return null
             }
             val bytes = response.body?.bytes() ?: return null
+            ArtworkProbe.onNetwork()
             bytesToSourceResult(bytes, DataSource.NETWORK)
         } catch (_: Exception) {
             null
