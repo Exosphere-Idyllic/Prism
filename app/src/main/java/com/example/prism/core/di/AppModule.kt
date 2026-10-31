@@ -70,6 +70,7 @@ val appModule = module {
             dispatchers = get(),
             scope = get(),
             progressTracker = get(),
+            scannerRepository = get<ScannerRepository>(),
         )
     }
     single<PlaybackManager> { get<PlaybackManagerImpl>() }

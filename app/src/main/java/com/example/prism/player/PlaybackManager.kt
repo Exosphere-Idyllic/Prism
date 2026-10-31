@@ -20,6 +20,7 @@ import com.example.prism.data.artwork.SongArtworkParams
 import com.example.prism.data.entity.Song
 import com.example.prism.data.preferences.PlaybackPreferences
 import com.example.prism.domain.repository.LibraryRepository
+import com.example.prism.domain.repository.ScannerRepository
 import com.example.prism.player.toMediaItems
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -65,7 +66,11 @@ class PlaybackManagerImpl(
     private val dispatchers: DispatcherProvider,
     private val scope: CoroutineScope,
     private val progressTracker: ProgressTracker = ProgressTracker(dispatchers, scope),
+    private val scannerRepository: ScannerRepository? = null,
 ) : PlaybackManager, CustomCommandDispatcher {
+
+    @Volatile
+    private var cachedLibraryIds: List<String>? = null
 
     companion object {
         /**
@@ -139,6 +144,18 @@ class PlaybackManagerImpl(
             _shuffleModeState.value = restoredShuffle
             _repeatModeState.value = restoredRepeat
             mediaController?.repeatMode = restoredRepeat
+        }
+        scannerRepository?.let { scanner ->
+            scope.launch(dispatchers.io) {
+                var wasLoading = false
+                scanner.isLoading.collect { loading ->
+                    if (wasLoading && !loading) {
+                        cachedLibraryIds = null
+                        Timber.d("Invalidated cachedLibraryIds on scan completion")
+                    }
+                    wasLoading = loading
+                }
+            }
         }
     }
 
@@ -352,7 +369,7 @@ class PlaybackManagerImpl(
                     if (!ids.contains(song.id)) listOf(song.id) + ids else ids
                 } else {
                     cachedContextSongs = null
-                    val ids = repository.getAllSongIds()
+                    val ids = cachedLibraryIds ?: repository.getAllSongIds().also { cachedLibraryIds = it }
                     if (!ids.contains(song.id)) listOf(song.id) + ids else ids
                 }
             }
