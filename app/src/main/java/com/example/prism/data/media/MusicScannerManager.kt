@@ -7,6 +7,7 @@ import com.example.prism.data.db.AppDatabase
 import com.example.prism.domain.repository.ScannerRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 
@@ -26,7 +27,8 @@ class MusicScannerManager(
 
     override val totalSongsCount: StateFlow<Int> = database.songDao()
         .getSongCountFlow()
-        .stateIn(scope, SharingStarted.Eagerly, 0)
+        .conflate()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val mediaStoreScanner: MediaStoreScanner = MediaStoreScannerImpl(
         app = app,
