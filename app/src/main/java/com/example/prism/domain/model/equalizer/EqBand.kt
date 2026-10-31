@@ -1,5 +1,6 @@
 package com.example.prism.domain.model.equalizer
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /**
@@ -12,6 +13,7 @@ import kotlinx.serialization.Serializable
  * @property gainDb Ganancia en decibelios en el rango de -12 dB a +12 dB. Aplica a filtros BELL, LOW_SHELF y HIGH_SHELF.
  * @property q Factor de calidad Q (ancho de banda y resonancia del filtro).
  */
+@Immutable
 @Serializable
 data class EqBand(
     val id: Int,

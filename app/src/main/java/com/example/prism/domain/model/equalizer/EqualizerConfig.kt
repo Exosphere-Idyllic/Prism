@@ -1,5 +1,6 @@
 package com.example.prism.domain.model.equalizer
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /**
@@ -12,6 +13,7 @@ import kotlinx.serialization.Serializable
  * @property bands Lista de bandas de filtrado configuradas ([EqBand]).
  * @property limiterEnabled Si es true, activa la protección de saturación suave (soft-knee limiter) para prevenir clipping digital.
  */
+@Immutable
 @Serializable
 data class EqualizerConfig(
     val enabled: Boolean = false,
