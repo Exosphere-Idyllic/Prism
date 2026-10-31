@@ -14,6 +14,8 @@ import coil3.decode.DataSource
 import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
+import coil3.asImage
+import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import java.io.ByteArrayOutputStream
@@ -196,7 +198,11 @@ class AlbumArtFetcher(
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) && !mediaUri.isNullOrEmpty()) {
             fetchSystemThumbnail(mediaUri.toUri(), signal)?.let { bitmap ->
                 ArtworkProbe.onSystemThumb()
-                return bitmapToSourceResult(bitmap)
+                return ImageFetchResult(
+                    image = cropToSquare(bitmap).asImage(),
+                    isSampled = false,
+                    dataSource = DataSource.DISK,
+                )
             }
         }
 
@@ -243,7 +249,11 @@ class AlbumArtFetcher(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             fetchSystemThumbnail(songUri, signal)?.let { bitmap ->
                 ArtworkProbe.onSystemThumb()
-                return bitmapToSourceResult(bitmap)
+                return ImageFetchResult(
+                    image = cropToSquare(bitmap).asImage(),
+                    isSampled = false,
+                    dataSource = DataSource.DISK,
+                )
             }
         }
 
