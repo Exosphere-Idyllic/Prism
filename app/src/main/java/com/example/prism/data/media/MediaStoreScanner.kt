@@ -62,9 +62,14 @@ class MediaStoreScannerImpl(
      * If multiple events or scan triggers arrive while doScan() is executing, exactly
      * one follow-up scan is triggered immediately after the active pass finishes.
      */
-    private val scanRequests = Channel<Unit>(Channel.CONFLATED)
+    private val scanRequests = Channel<Boolean>(Channel.CONFLATED)
 
     private val hasStarted = AtomicBoolean(false)
+    private var lastFullReconcileMs = 0L
+
+    companion object {
+        private const val RECONCILE_INTERVAL_MS = 5 * 60 * 1000L
+    }
 
     // Shared MediaStore projection — declared once, reused by all query helpers.
     private val songProjection = arrayOf(
@@ -85,13 +90,13 @@ class MediaStoreScannerImpl(
                 contentObserverEvents
                     .debounce(1000.milliseconds)
                     .collect {
-                        scanRequests.trySend(Unit)
+                        scanRequests.trySend(false)
                     }
             }
 
             while (true) {
-                scanRequests.receive()
-                doScan()
+                val forceReconcile = scanRequests.receive()
+                doScan(forceReconcile)
             }
         }
     }
@@ -142,10 +147,10 @@ class MediaStoreScannerImpl(
             if (hasSongsAlready) {
                 scope.launch(dispatchers.io) {
                     kotlinx.coroutines.delay(200)
-                    scanRequests.trySend(Unit)
+                    scanRequests.trySend(false)
                 }
             } else {
-                scanRequests.trySend(Unit)
+                scanRequests.trySend(true)
             }
         }
     }
@@ -155,7 +160,7 @@ class MediaStoreScannerImpl(
             Timber.d("MediaStore triggerScan skipped: missing audio storage permission")
             return
         }
-        scanRequests.trySend(Unit)
+        scanRequests.trySend(true)
     }
 
     override fun stopObserving() {
@@ -166,7 +171,7 @@ class MediaStoreScannerImpl(
         hasStarted.set(false)
     }
 
-    private suspend fun doScan() {
+    private suspend fun doScan(forceReconcile: Boolean = false) {
         val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
         val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
         val isFullScan = roomSongsInfo.isEmpty()
@@ -183,14 +188,18 @@ class MediaStoreScannerImpl(
         var upsertCount = 0
         var deleteCount = 0
 
+        val shouldReconcile = isFullScan || forceReconcile ||
+            (System.currentTimeMillis() - lastFullReconcileMs >= RECONCILE_INTERVAL_MS)
+
         try {
-            val mediaStoreIds = queryMediaStoreIds()
+            val mediaStoreIds = if (shouldReconcile) queryMediaStoreIds() else null
             ScanProbe.onPhase("queryMediaStoreIds")
 
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
 
             if (mediaStoreIds != null) {
+                lastFullReconcileMs = System.currentTimeMillis()
                 if (isFullScan) {
                     toUpsert.addAll(querySongsFromMediaStore())
                 } else {
@@ -227,9 +236,16 @@ class MediaStoreScannerImpl(
                     }
                 }
             } else {
-                Timber.w("MediaStore ID query failed; performing safe incremental query")
-                val changed = querySongsFromMediaStore(modifiedAfter = if (isFullScan) 0L else lastScanTimestamp)
-                toUpsert.addAll(changed)
+                // Quick incremental scan (reconciliation deferred)
+                if (lastScanTimestamp > 0L) {
+                    val modifiedSongs = querySongsFromMediaStore(modifiedAfter = lastScanTimestamp)
+                    for (song in modifiedSongs) {
+                        val dbInfo = roomSongsInfo[song.id]
+                        if ((dbInfo == null) || (song.dateModified > dbInfo.dateModified)) {
+                            toUpsert.add(song)
+                        }
+                    }
+                }
             }
 
             // On isFullScan, oldSongs and songsToDelete are never needed.
