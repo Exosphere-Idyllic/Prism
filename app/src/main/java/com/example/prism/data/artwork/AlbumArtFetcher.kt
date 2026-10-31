@@ -15,6 +15,7 @@ import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
 import coil3.asImage
+import coil3.size.pxOrElse
 import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
@@ -283,10 +284,11 @@ class AlbumArtFetcher(
 
     private fun fetchSystemThumbnail(uri: android.net.Uri, signal: CancellationSignal): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val targetSize = if (requestedSize > 0) requestedSize.coerceIn(128, MASTER_ARTWORK_SIZE) else MASTER_ARTWORK_SIZE
         return try {
             context.contentResolver.loadThumbnail(
                 uri,
-                Size(MASTER_ARTWORK_SIZE, MASTER_ARTWORK_SIZE),
+                Size(targetSize, targetSize),
                 signal,
             )
         } catch (_: Exception) {
@@ -413,19 +415,36 @@ class AlbumArtFetcher(
         )
     }
 
+    private fun resolveRequestedSize(dataSize: Int, options: Options): Int {
+        val optionWidth = options.size.width.pxOrElse { 0 }
+        val optionHeight = options.size.height.pxOrElse { 0 }
+        val optionDim = maxOf(optionWidth, optionHeight)
+        return when {
+            optionDim > 0 -> optionDim.coerceIn(128, MASTER_ARTWORK_SIZE)
+            dataSize > 0 -> dataSize.coerceIn(128, MASTER_ARTWORK_SIZE)
+            else -> MASTER_ARTWORK_SIZE
+        }
+    }
+
     class SongFactory : Fetcher.Factory<SongArtworkParams> {
         override fun create(
             data: SongArtworkParams,
             options: Options,
             imageLoader: ImageLoader,
         ): Fetcher {
+            val resolvedSize = if (data.size != MASTER_ARTWORK_SIZE && data.size > 0) {
+                data.size
+            } else {
+                val optionDim = maxOf(options.size.width.pxOrElse { 0 }, options.size.height.pxOrElse { 0 })
+                if (optionDim > 0) optionDim.coerceIn(128, MASTER_ARTWORK_SIZE) else data.size
+            }
             return AlbumArtFetcher(
                 albumId = data.song.albumId,
                 artworkUri = data.song.artworkUri,
                 customArtworkUri = data.song.customArtworkUri,
                 mediaUri = data.song.mediaUri,
                 context = options.context,
-                requestedSize = data.size,
+                requestedSize = resolvedSize,
                 dateModified = data.song.dateModified,
             )
         }
@@ -437,13 +456,19 @@ class AlbumArtFetcher(
             options: Options,
             imageLoader: ImageLoader,
         ): Fetcher {
+            val resolvedSize = if (data.size != MASTER_ARTWORK_SIZE && data.size > 0) {
+                data.size
+            } else {
+                val optionDim = maxOf(options.size.width.pxOrElse { 0 }, options.size.height.pxOrElse { 0 })
+                if (optionDim > 0) optionDim.coerceIn(128, MASTER_ARTWORK_SIZE) else data.size
+            }
             return AlbumArtFetcher(
                 albumId = data.albumId,
                 artworkUri = data.coverUri,
                 customArtworkUri = data.customCoverUri,
                 mediaUri = null,
                 context = options.context,
-                requestedSize = data.size,
+                requestedSize = resolvedSize,
                 dateModified = 0L,
             )
         }
@@ -467,6 +492,8 @@ class AlbumArtFetcher(
                     } catch (_: Exception) {
                         0L
                     }
+                    val optionDim = maxOf(options.size.width.pxOrElse { 0 }, options.size.height.pxOrElse { 0 })
+                    val resolvedSize = if (optionDim > 0) optionDim.coerceIn(128, MASTER_ARTWORK_SIZE) else MASTER_ARTWORK_SIZE
                     if (albumId > 0L) {
                         AlbumArtFetcher(
                             albumId = albumId,
@@ -474,18 +501,20 @@ class AlbumArtFetcher(
                             customArtworkUri = "",
                             mediaUri = null,
                             context = options.context,
-                            requestedSize = MASTER_ARTWORK_SIZE,
+                            requestedSize = resolvedSize,
                         )
                     } else null
                 }
                 isAudioMedia -> {
+                    val optionDim = maxOf(options.size.width.pxOrElse { 0 }, options.size.height.pxOrElse { 0 })
+                    val resolvedSize = if (optionDim > 0) optionDim.coerceIn(128, MASTER_ARTWORK_SIZE) else MASTER_ARTWORK_SIZE
                     AlbumArtFetcher(
                         albumId = 0L,
                         artworkUri = "",
                         customArtworkUri = "",
                         mediaUri = uriStr,
                         context = options.context,
-                        requestedSize = MASTER_ARTWORK_SIZE,
+                        requestedSize = resolvedSize,
                     )
                 }
                 else -> null
