@@ -325,9 +325,13 @@ class AlbumArtFetcher(
                 response.close()
                 return null
             }
-            val bytes = response.body?.bytes() ?: return null
+            val body = response.body
             ArtworkProbe.onNetwork()
-            bytesToSourceResult(bytes, DataSource.NETWORK)
+            SourceFetchResult(
+                source = ImageSource(source = body.source(), fileSystem = FileSystem.SYSTEM),
+                mimeType = body.contentType()?.toString(),
+                dataSource = DataSource.NETWORK,
+            )
         } catch (_: Exception) {
             null
         }
