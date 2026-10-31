@@ -188,6 +188,9 @@ class PlaybackService : MediaSessionService(), KoinComponent {
                     controller: MediaSession.ControllerInfo,
                     mediaItems: List<MediaItem>,
                 ): ListenableFuture<List<MediaItem>> {
+                    if (mediaItems.all { it.localConfiguration != null }) {
+                        return Futures.immediateFuture(mediaItems)
+                    }
                     val resolvedItems = mediaItems.map { item ->
                         if (item.localConfiguration == null) {
                             val uri = item.requestMetadata.mediaUri ?: (
