@@ -18,7 +18,7 @@ interface ArtistDao {
     fun searchArtistsFts(query: String): Flow<List<Artist>>
 
 
-    @Query("DELETE FROM artists WHERE name NOT IN (SELECT DISTINCT artist FROM songs)")
+    @Query("DELETE FROM artists WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.artist = artists.name)")
     suspend fun deleteOrphans()
 
     @Query(
