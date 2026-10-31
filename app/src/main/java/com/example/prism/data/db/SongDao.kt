@@ -64,17 +64,26 @@ interface SongDao {
      */
     @Transaction
     suspend fun upsertPreservingUserFields(songs: List<Song>) {
-        val rowIds = insertAllIgnore(songs)
-        for (i in songs.indices) {
-            if (rowIds.getOrNull(i) == -1L) {
-                val song = songs[i]
-                updateSongPreservingCustomFields(
-                    id = song.id, title = song.title, artist = song.artist,
-                    album = song.album, albumId = song.albumId, mediaUri = song.mediaUri,
-                    artworkUri = song.artworkUri, duration = song.duration,
-                    dateModified = song.dateModified, track = song.track
-                )
+        val existing = getSongsSyncInfo().associateBy { it.id }
+
+        val toInsert = ArrayList<Song>(songs.size)
+        val toUpdate = ArrayList<Song>(songs.size)
+        for (song in songs) {
+            val old = existing[song.id]
+            when {
+                old == null -> toInsert.add(song)
+                song.dateModified > old.dateModified -> toUpdate.add(song)
             }
+        }
+
+        if (toInsert.isNotEmpty()) insertAllIgnore(toInsert)
+        for (song in toUpdate) {
+            updateSongPreservingCustomFields(
+                id = song.id, title = song.title, artist = song.artist,
+                album = song.album, albumId = song.albumId, mediaUri = song.mediaUri,
+                artworkUri = song.artworkUri, duration = song.duration,
+                dateModified = song.dateModified, track = song.track
+            )
         }
     }
 
