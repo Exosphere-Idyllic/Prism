@@ -51,13 +51,15 @@
 
 ---
 
-## Phase 1 Plan
-*Pending — start only after Phase 0 is cleanly merged.*
+## Phase 1 Results
+**Status**: ✅ Completed | **Commits**: 12 (Commit 9 to Commit 20) | **Doc**: [Phase 1 Results](file:///c:/Users/USER/Codespaces/Dev/Prism/docs/perf/phase-1-results.md) & [Phase 1 Baseline](file:///c:/Users/USER/Codespaces/Dev/Prism/docs/perf/phase-1-baseline.md)
 
-Focus areas:
-- Add `ScanProbe` + `PlayTapProbe` instrumentation
-- Identify and fix scan performance bottlenecks
-- Identify and fix play-tap-to-audio latency
+Key Achievements:
+- **Scan incremental**: Query overhead reduced to 0 ms on periodic intervals (#13) and Room upsert statements pre-filtered (#12).
+- **Tap-to-play**: `getAllSongIds` cached with invalidation on scan (#17), cutting `resolveIds` by -75%.
+- **Artwork pipeline**: `ImageFetchResult` avoids JPEG encode/decode cycles (#14), requested size propagated dynamically to downsample thumbnails (#15), and OkHttp responses streamed directly without heap buffering (#16).
+- **Equalizer**: Trig calculation moved to audio thread (#18) eliminating 3600 calls/s on UI thread, models marked `@Immutable` (#19) to prevent recomposition churn.
+- **Smoothness**: Fling scroll jank dropped from 37.08% to 23.99% (-35% reduction in frame drops), slow bitmap uploads dropped to 0.
 
 ## Phase 2 Plan
 *Pending — after Phase 1.*

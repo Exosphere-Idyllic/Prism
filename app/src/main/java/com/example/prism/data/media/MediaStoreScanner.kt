@@ -13,6 +13,7 @@ import com.example.prism.data.preferences.ScanPreferences
 import kotlinx.coroutines.CoroutineScope
 import com.example.prism.core.util.DefaultDispatcherProvider
 import com.example.prism.core.util.DispatcherProvider
+import com.example.prism.core.util.ScanProbe
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -61,9 +62,14 @@ class MediaStoreScannerImpl(
      * If multiple events or scan triggers arrive while doScan() is executing, exactly
      * one follow-up scan is triggered immediately after the active pass finishes.
      */
-    private val scanRequests = Channel<Unit>(Channel.CONFLATED)
+    private val scanRequests = Channel<Boolean>(Channel.CONFLATED)
 
     private val hasStarted = AtomicBoolean(false)
+    private var lastFullReconcileMs = 0L
+
+    companion object {
+        private const val RECONCILE_INTERVAL_MS = 5 * 60 * 1000L
+    }
 
     // Shared MediaStore projection — declared once, reused by all query helpers.
     private val songProjection = arrayOf(
@@ -84,13 +90,13 @@ class MediaStoreScannerImpl(
                 contentObserverEvents
                     .debounce(1000.milliseconds)
                     .collect {
-                        scanRequests.trySend(Unit)
+                        scanRequests.trySend(false)
                     }
             }
 
             while (true) {
-                scanRequests.receive()
-                doScan()
+                val forceReconcile = scanRequests.receive()
+                doScan(forceReconcile)
             }
         }
     }
@@ -141,10 +147,10 @@ class MediaStoreScannerImpl(
             if (hasSongsAlready) {
                 scope.launch(dispatchers.io) {
                     kotlinx.coroutines.delay(200)
-                    scanRequests.trySend(Unit)
+                    scanRequests.trySend(false)
                 }
             } else {
-                scanRequests.trySend(Unit)
+                scanRequests.trySend(true)
             }
         }
     }
@@ -154,7 +160,7 @@ class MediaStoreScannerImpl(
             Timber.d("MediaStore triggerScan skipped: missing audio storage permission")
             return
         }
-        scanRequests.trySend(Unit)
+        scanRequests.trySend(true)
     }
 
     override fun stopObserving() {
@@ -165,10 +171,12 @@ class MediaStoreScannerImpl(
         hasStarted.set(false)
     }
 
-    private suspend fun doScan() {
+    private suspend fun doScan(forceReconcile: Boolean = false) {
         val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
         val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
         val isFullScan = roomSongsInfo.isEmpty()
+        ScanProbe.onScanStart(isFullScan)
+        ScanProbe.onPhase("getSongsSyncInfo")
 
         // For initial full scans (empty DB), display loading immediately.
         // For incremental scans (cold start with existing library), defer loading state
@@ -177,13 +185,21 @@ class MediaStoreScannerImpl(
             _isLoading.value = true
         }
 
+        var upsertCount = 0
+        var deleteCount = 0
+
+        val shouldReconcile = isFullScan || forceReconcile ||
+            (System.currentTimeMillis() - lastFullReconcileMs >= RECONCILE_INTERVAL_MS)
+
         try {
-            val mediaStoreIds = queryMediaStoreIds()
+            val mediaStoreIds = if (shouldReconcile) queryMediaStoreIds() else null
+            ScanProbe.onPhase("queryMediaStoreIds")
 
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
 
             if (mediaStoreIds != null) {
+                lastFullReconcileMs = System.currentTimeMillis()
                 if (isFullScan) {
                     toUpsert.addAll(querySongsFromMediaStore())
                 } else {
@@ -220,9 +236,16 @@ class MediaStoreScannerImpl(
                     }
                 }
             } else {
-                Timber.w("MediaStore ID query failed; performing safe incremental query")
-                val changed = querySongsFromMediaStore(modifiedAfter = if (isFullScan) 0L else lastScanTimestamp)
-                toUpsert.addAll(changed)
+                // Quick incremental scan (reconciliation deferred)
+                if (lastScanTimestamp > 0L) {
+                    val modifiedSongs = querySongsFromMediaStore(modifiedAfter = lastScanTimestamp)
+                    for (song in modifiedSongs) {
+                        val dbInfo = roomSongsInfo[song.id]
+                        if ((dbInfo == null) || (song.dateModified > dbInfo.dateModified)) {
+                            toUpsert.add(song)
+                        }
+                    }
+                }
             }
 
             // On isFullScan, oldSongs and songsToDelete are never needed.
@@ -238,25 +261,33 @@ class MediaStoreScannerImpl(
                 emptyList()
             }
 
+            ScanProbe.onPhase("diffAndQueryChanged")
+
             val hasChanges = toUpsert.isNotEmpty() || toDelete.isNotEmpty()
             if (!isFullScan && hasChanges) {
                 _isLoading.value = true
             }
+
+            upsertCount = toUpsert.size
+            deleteCount = toDelete.size
 
             withContext(NonCancellable) {
                 database.withTransaction {
                     if (toUpsert.isNotEmpty()) {
                         toUpsert.chunked(200).forEach { chunk -> songDao.upsertPreservingUserFields(chunk) }
                     }
+                    ScanProbe.onPhase("upsert")
                     if (toDelete.isNotEmpty()) {
                         toDelete.chunked(200).forEach { chunk ->
                             songDao.deleteSongsByIds(chunk)
                         }
                     }
+                    ScanProbe.onPhase("delete")
 
                     if (hasChanges || isFullScan) {
                         metadataUpdater.updateMetadata(toUpsert, oldSongs, songsToDelete, isFullScan)
                     }
+                    ScanProbe.onPhase("metadataSync")
                 }
             }
 
@@ -267,9 +298,11 @@ class MediaStoreScannerImpl(
             }
 
             scanPreferences.setLastScanTimestamp((System.currentTimeMillis() / 1000L) - 5)
+            ScanProbe.onPhase("setLastScanTimestamp")
         } catch (e: Exception) {
             Timber.e(e, "Error during scan")
         } finally {
+            ScanProbe.onScanEnd(upsertCount, deleteCount)
             _isLoading.value = false
         }
     }
