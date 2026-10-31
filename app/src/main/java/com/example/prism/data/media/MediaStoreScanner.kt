@@ -13,6 +13,7 @@ import com.example.prism.data.preferences.ScanPreferences
 import kotlinx.coroutines.CoroutineScope
 import com.example.prism.core.util.DefaultDispatcherProvider
 import com.example.prism.core.util.DispatcherProvider
+import com.example.prism.core.util.ScanProbe
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -169,6 +170,8 @@ class MediaStoreScannerImpl(
         val lastScanTimestamp = scanPreferences.getLastScanTimestamp()
         val roomSongsInfo = songDao.getSongsSyncInfo().associateBy { it.id }
         val isFullScan = roomSongsInfo.isEmpty()
+        ScanProbe.onScanStart(isFullScan)
+        ScanProbe.onPhase("getSongsSyncInfo")
 
         // For initial full scans (empty DB), display loading immediately.
         // For incremental scans (cold start with existing library), defer loading state
@@ -177,8 +180,12 @@ class MediaStoreScannerImpl(
             _isLoading.value = true
         }
 
+        var upsertCount = 0
+        var deleteCount = 0
+
         try {
             val mediaStoreIds = queryMediaStoreIds()
+            ScanProbe.onPhase("queryMediaStoreIds")
 
             val toUpsert = mutableListOf<Song>()
             val toDelete = mutableListOf<String>()
@@ -238,25 +245,33 @@ class MediaStoreScannerImpl(
                 emptyList()
             }
 
+            ScanProbe.onPhase("diffAndQueryChanged")
+
             val hasChanges = toUpsert.isNotEmpty() || toDelete.isNotEmpty()
             if (!isFullScan && hasChanges) {
                 _isLoading.value = true
             }
+
+            upsertCount = toUpsert.size
+            deleteCount = toDelete.size
 
             withContext(NonCancellable) {
                 database.withTransaction {
                     if (toUpsert.isNotEmpty()) {
                         toUpsert.chunked(200).forEach { chunk -> songDao.upsertPreservingUserFields(chunk) }
                     }
+                    ScanProbe.onPhase("upsert")
                     if (toDelete.isNotEmpty()) {
                         toDelete.chunked(200).forEach { chunk ->
                             songDao.deleteSongsByIds(chunk)
                         }
                     }
+                    ScanProbe.onPhase("delete")
 
                     if (hasChanges || isFullScan) {
                         metadataUpdater.updateMetadata(toUpsert, oldSongs, songsToDelete, isFullScan)
                     }
+                    ScanProbe.onPhase("metadataSync")
                 }
             }
 
@@ -267,9 +282,11 @@ class MediaStoreScannerImpl(
             }
 
             scanPreferences.setLastScanTimestamp((System.currentTimeMillis() / 1000L) - 5)
+            ScanProbe.onPhase("setLastScanTimestamp")
         } catch (e: Exception) {
             Timber.e(e, "Error during scan")
         } finally {
+            ScanProbe.onScanEnd(upsertCount, deleteCount)
             _isLoading.value = false
         }
     }
