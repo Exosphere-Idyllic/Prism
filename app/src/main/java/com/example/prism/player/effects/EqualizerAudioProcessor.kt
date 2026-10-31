@@ -112,9 +112,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             active++
         }
 
-        // Clear trailing slots so stale references don't linger
-        for (i in active until MAX_BANDS) activeFilters[i] = null
-
         // Also reset any filter slots that are no longer active, to avoid stale state
         // if they get reactivated later without an explicit flush.
         for (i in active until MAX_BANDS) filters[i].reset()
