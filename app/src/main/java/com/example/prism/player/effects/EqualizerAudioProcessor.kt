@@ -7,6 +7,7 @@ import androidx.media3.common.audio.AudioProcessor.AudioFormat
 import androidx.media3.common.audio.AudioProcessor.UnhandledAudioFormatException
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import com.example.prism.BuildConfig
 import com.example.prism.domain.model.equalizer.EqualizerConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -241,7 +242,9 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
      * above 2/3 toward 1.0 to eliminate harsh digital clipping without expensive transcendentals.
      */
     private fun softClip(x: Float): Float {
-        if (x > 0.666667f || x < -0.666667f) EqualizerProbe.onClip()
+        if (BuildConfig.DEBUG && (x > 0.666667f || x < -0.666667f)) {
+            EqualizerProbe.onClip()
+        }
         return when {
             x > 1.333333f -> 1.0f
             x < -1.333333f -> -1.0f
