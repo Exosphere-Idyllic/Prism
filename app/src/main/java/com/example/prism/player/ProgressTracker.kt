@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -114,17 +115,16 @@ class ProgressTracker(
     private fun startProgressUpdate() {
         if (progressJob?.isActive == true) return
         progressJob = scope.launch(dispatchers.main) {
-            while (true) {
-                mediaController?.let {
-                    // Avoid jitter if user recently sought and position hasn't confirmed yet
-                    if (System.currentTimeMillis() - lastSeekTimestamp > 1000L) {
-                        val pos = it.currentPosition.coerceAtLeast(0L)
-                        val dur = it.duration
-                        _progressState.value = _progressState.value.copy(
-                            currentPosition = pos,
-                            duration = if (dur > 0L) dur else _progressState.value.duration,
-                        )
-                    }
+            while (isActive) {
+                val controller = mediaController ?: break
+                // Avoid jitter if user recently sought and position hasn't confirmed yet
+                if (System.currentTimeMillis() - lastSeekTimestamp > 1000L) {
+                    val pos = controller.currentPosition.coerceAtLeast(0L)
+                    val dur = controller.duration
+                    _progressState.value = _progressState.value.copy(
+                        currentPosition = pos,
+                        duration = if (dur > 0L) dur else _progressState.value.duration,
+                    )
                 }
                 delay(250.milliseconds)
             }
