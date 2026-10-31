@@ -534,13 +534,11 @@ class PlaybackManagerImpl(
 
     override fun sendCustomCommand(action: String, args: android.os.Bundle) {
         scope.launch(dispatchers.main) {
-            val controller = mediaController
-            if (controller != null) {
-                val command = SessionCommand(action, android.os.Bundle.EMPTY)
-                controller.sendCustomCommand(command, args)
-            } else {
-                Timber.w("MediaController not connected yet; custom command %s was dropped", action)
+            val controller = mediaController ?: run {
+                Timber.w("MediaController not connected yet; custom command %s dropped", action)
+                return@launch
             }
+            controller.sendCustomCommand(SessionCommand(action, android.os.Bundle.EMPTY), args)
         }
     }
 
