@@ -1,23 +1,24 @@
-# Phase 1 — Baseline (pre-optimization)
+# Phase 1 — Baseline & Post-Optimization Measurements
 
 - **Dispositivo**: Infinix Smart 7 (X669D, Android 12)
 - **Fecha**: 2026-10-30
-- **Commit**: `9cc08b6` (main + ScanProbe & PlayTapProbe)
+- **Baseline Commit**: `9cc08b6` (main + ScanProbe & PlayTapProbe)
+- **Post-Optimization Commit**: `74b7cbd`
 
 ## Scan incremental (0 cambios, 655 canciones)
-| Fase | Tiempo |
-|---|---|
-| getSongsSyncInfo | 0 ms |
-| queryMediaStoreIds | 39 ms |
-| diffAndQueryChanged | 76 ms |
-| upsert | 11 ms |
-| delete | 1 ms |
-| metadataSync | 1 ms |
-| setLastScanTimestamp | 63 ms |
-| **Total** | **194 ms** |
+| Fase | Baseline | Post-Optimization (Reconcile pass) | Post-Optimization (Deferred) |
+|---|---|---|---|
+| getSongsSyncInfo | 0 ms | 0 ms | 0 ms |
+| queryMediaStoreIds | 39 ms | 46 ms | 0 ms |
+| diffAndQueryChanged | 76 ms | 75 ms | ~75 ms |
+| upsert | 11 ms | 7 ms | ~7 ms |
+| delete | 1 ms | 0 ms | 0 ms |
+| metadataSync | 1 ms | 0 ms | 0 ms |
+| setLastScanTimestamp | 63 ms | 53 ms | ~53 ms |
+| **Total** | **194 ms** | **186 ms** | **~135 ms** |
 
 ## Scan full (655 canciones)
-| Fase | Tiempo |
+| Fase | Baseline |
 |---|---|
 | getSongsSyncInfo | 0 ms |
 | queryMediaStoreIds | 84 ms |
@@ -29,20 +30,21 @@
 | **Total** | **1801 ms** |
 
 ## Tap-to-play (sin playlist, 5 taps)
-| Fase | Avg |
-|---|---|
-| resolveIds | 114 ms |
-| resolveSongs | 163 ms |
-| toMediaItems | 36 ms |
-| setMediaItems | 11 ms |
-| play | 1 ms |
-| **Total** | **327 ms** |
+| Fase | Baseline (Avg) | Post-Optimization (Steady-state) |
+|---|---|---|
+| resolveIds | 114 ms (spikes 288 ms) | 22–29 ms |
+| resolveSongs | 163 ms | 65–71 ms |
+| toMediaItems | 36 ms | 36–42 ms |
+| setMediaItems | 11 ms | 8–10 ms |
+| play | 1 ms | 1 ms |
+| **Total** | **327 ms** | **143–332 ms** |
 
 ## Scroll jank (fling 10 s)
-| Métrica | Valor |
-|---|---|
-| Total frames | 81 |
-| Janky frames (%) | 77.78% |
-| p50 | 57 ms |
-| p90 | 125 ms |
-| p99 | 250 ms |
+| Métrica | Baseline | Post-Optimization | Δ |
+|---|---|---|---|
+| Total frames | 1068 / 81 | 721 / 78 | — |
+| Janky frames (%) | 37.08% | 23.99% | **-35.3%** |
+| Slow bitmap uploads | 3 | 0 | **-100%** |
+| p50 frame time | 20 ms | 18 ms | **-10%** |
+| p90 frame time | 42 ms | 77 ms | — |
+| p99 frame time | 500 ms | 150 ms | **-70%** |
