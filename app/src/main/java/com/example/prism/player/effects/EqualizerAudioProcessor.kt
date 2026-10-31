@@ -34,6 +34,8 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     private val configRef = AtomicReference(EqualizerConfig())
+    @Volatile
+    private var pendingRecalcSampleRate: Int = 0
 
     // Pool de filtros pre-allocated: filters[0..MAX_BANDS-1].
     // activeFilters[0..activeBandCount-1] contiene solo los filtros con coeficientes no-BYPASS,
@@ -58,7 +60,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         configRef.set(config)
         updateFromConfig(config)
         if (inputAudioFormat.sampleRate > 0) {
-            recalculateCoefficients(inputAudioFormat.sampleRate)
+            pendingRecalcSampleRate = inputAudioFormat.sampleRate
         }
     }
 
@@ -80,6 +82,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             throw UnhandledAudioFormatException(inputAudioFormat)
         }
         recalculateCoefficients(inputAudioFormat.sampleRate)
+        pendingRecalcSampleRate = 0
         return inputAudioFormat
     }
 
@@ -125,6 +128,12 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         try {
             val remaining = inputBuffer.remaining()
             if (remaining == 0) return
+
+            val pendingRate = pendingRecalcSampleRate
+            if (pendingRate > 0) {
+                pendingRecalcSampleRate = 0
+                recalculateCoefficients(pendingRate)
+            }
 
             // Bypass path 1: EQ disabled by the user.
             // Bypass path 2: EQ enabled but all bands are effectively neutral (all gain ≈ 0 dB).
@@ -227,6 +236,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onReset() {
+        pendingRecalcSampleRate = 0
         for (i in filters.indices) {
             filters[i].reset()
         }
